@@ -76,35 +76,54 @@ jobs:
           key: ${{ runner.os }}-cargo-msvc-${{ hashFiles('**/Cargo.lock') }}
 
       # GUI 版：默认 feature（eframe + rfd）
+      # 注意：GUI 与 CLI 编译产物同名（sync-iobs.exe），必须编完立刻改名拷走，
+      # 否则后一次编译会覆盖前一次，导致 gui 包里装的是 CLI。
       - name: Build GUI (static CRT)
         shell: bash
         run: |
-          cargo build --locked --release --target x86_64-pc-windows-msvc
-        env:
-          RUSTFLAGS: -C target-feature=+crt-static
+          set -eu
+          TARGET=x86_64-pc-windows-msvc
+          cargo build --locked --release --target "$TARGET"
+          mkdir -p staging
+          cp "target/$TARGET/release/sync-iobs.exe" staging/sync-iobs-gui.exe
+          ls -l staging/sync-iobs-gui.exe
 
       # CLI 版：零 GUI 依赖，产物小
       - name: Build CLI (no-default-features, static CRT)
         shell: bash
         run: |
-          cargo build --locked --release --no-default-features --target x86_64-pc-windows-msvc
-        env:
-          RUSTFLAGS: -C target-feature=+crt-static
+          set -eu
+          TARGET=x86_64-pc-windows-msvc
+          cargo build --locked --release --no-default-features --target "$TARGET"
+          cp "target/$TARGET/release/sync-iobs.exe" staging/sync-iobs-cli.exe
+          ls -l staging/
+
+      - name: Verify GUI build actually contains the GUI
+        shell: bash
+        run: |
+          set -eu
+          GUI=$(stat -c%s staging/sync-iobs-gui.exe)
+          CLI=$(stat -c%s staging/sync-iobs-cli.exe)
+          echo "GUI=$GUI bytes, CLI=$CLI bytes"
+          if [ "$GUI" -le "$CLI" ]; then
+            echo "::error::GUI 产物不大于 CLI 产物，说明 GUI feature 未生效（可能被覆盖）"
+            exit 1
+          fi
+          echo "尺寸校验通过：GUI 明显大于 CLI"
 
       - name: Package
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          $target = 'x86_64-pc-windows-msvc'
           New-Item -ItemType Directory -Force -Path $env:OUT_DIR | Out-Null
 
-          # GUI 产物 + 配置模板 + 启动脚本，整包可直接分发
+          # GUI 包：GUI 二进制 + 配置模板 + 启动脚本
           # 注意：只打包脱敏模板 iobs.ini.example，绝不打包含真实凭据的 iobs.ini
           $pkg = 'pkg-gui'
           Remove-Item -Recurse -Force $pkg -ErrorAction SilentlyContinue
           New-Item -ItemType Directory -Force -Path $pkg | Out-Null
 
-          Copy-Item "target/$target/release/sync-iobs.exe" "$pkg/sync-iobs.exe"
+          Copy-Item 'staging/sync-iobs-gui.exe' "$pkg/sync-iobs.exe"
           Copy-Item 'iobs.ini.example' "$pkg/iobs.ini"
 
           # bat 用 CRLF 换行，Windows 下双击才正常
@@ -116,7 +135,7 @@ jobs:
           Compress-Archive -Path "$pkg/*" -DestinationPath "$env:OUT_DIR/sync-iobs-windows-x86_64-gui.zip" -Force
 
           # CLI 单文件
-          Copy-Item "target/$target/release/sync-iobs.exe" "$env:OUT_DIR/sync-iobs-windows-x86_64-cli.exe"
+          Copy-Item 'staging/sync-iobs-cli.exe' "$env:OUT_DIR/sync-iobs-windows-x86_64-cli.exe"
 
           Get-ChildItem $env:OUT_DIR | Select-Object Name, @{n='MB';e={[math]::Round($_.Length/1MB,2)}} | Format-Table
 
@@ -162,25 +181,51 @@ jobs:
             target
           key: ${{ runner.os }}-${{ matrix.label }}-cargo-${{ hashFiles('**/Cargo.lock') }}
 
+      # 注意：GUI 与 CLI 编译产物同名（release/sync-iobs），必须编完立刻拷走，
+      # 否则后一次编译会覆盖前一次，导致 gui 包里装的是 CLI。
       - name: Build GUI
-        run: cargo build --locked --release --target ${{ matrix.arch }}
+        run: |
+          set -eu
+          T="${{ matrix.arch }}"
+          cargo build --locked --release --target "$T"
+          mkdir -p staging
+          cp "target/$T/release/sync-iobs" staging/sync-iobs-gui
+          chmod +x staging/sync-iobs-gui
+          ls -l staging/sync-iobs-gui
 
       - name: Build CLI (no-default-features)
-        run: cargo build --locked --release --no-default-features --target ${{ matrix.arch }}
+        run: |
+          set -eu
+          T="${{ matrix.arch }}"
+          cargo build --locked --release --no-default-features --target "$T"
+          cp "target/$T/release/sync-iobs" staging/sync-iobs-cli
+          chmod +x staging/sync-iobs-cli
+          ls -l staging/
+
+      - name: Verify GUI build actually contains the GUI
+        run: |
+          set -eu
+          GUI=$(stat -f%z staging/sync-iobs-gui)
+          CLI=$(stat -f%z staging/sync-iobs-cli)
+          echo "GUI=$GUI bytes, CLI=$CLI bytes"
+          if [ "$GUI" -le "$CLI" ]; then
+            echo "::error::GUI 产物不大于 CLI 产物，说明 GUI feature 未生效（可能被覆盖）"
+            exit 1
+          fi
+          echo "尺寸校验通过：GUI 明显大于 CLI"
 
       - name: Package
         run: |
           set -eu
           mkdir -p "$OUT_DIR"
-          T="${{ matrix.arch }}"
           L="${{ matrix.label }}"
           # GUI 包：app bundle 形式，双击即用
           rm -rf "SyncIOBS.app"
           mkdir -p "SyncIOBS.app/Contents/MacOS" "SyncIOBS.app/Contents/Resources"
-          cp "target/$T/release/sync-iobs" "SyncIOBS.app/Contents/MacOS/SyncIOBS"
+          cp "staging/sync-iobs-gui" "SyncIOBS.app/Contents/MacOS/SyncIOBS"
           chmod +x "SyncIOBS.app/Contents/MacOS/SyncIOBS"
           cp iobs.ini.example "SyncIOBS.app/Contents/Resources/iobs.ini"
-          # Info.plist：heredoc 用 <<- 加 TAB 缩进，输出无多余空格
+          # Info.plist：逐行 printf 输出，避免 heredoc 缩进残留
           printf '%s\n' \
             '<?xml version="1.0" encoding="UTF-8"?>' \
             '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">' \
@@ -202,7 +247,7 @@ jobs:
           plutil -lint "SyncIOBS.app/Contents/Info.plist"
           zip -qry "$OUT_DIR/sync-iobs-macos-$L-gui.zip" "SyncIOBS.app"
           # CLI 单文件
-          cp "target/$T/release/sync-iobs" "$OUT_DIR/sync-iobs-macos-$L-cli"
+          cp "staging/sync-iobs-cli" "$OUT_DIR/sync-iobs-macos-$L-cli"
           chmod +x "$OUT_DIR/sync-iobs-macos-$L-cli"
           ls -lh "$OUT_DIR"
 
