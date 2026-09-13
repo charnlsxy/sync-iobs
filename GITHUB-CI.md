@@ -19,12 +19,23 @@
 
 ## 二、触发方式
 
+**只在打 tag 时跑完整流水线**，避免同一 commit 被跑两遍（main 推送 + tag 各一次）。
+
 | 动作 | 结果 |
 |---|---|
-| push 到 `main` | 跑测试 + 编译，产物存为 Actions Artifacts |
-| 提 Pull Request | 同上，可用于合并前验证 |
-| 推 `v*` tag | 跑全流程 + **发布 Release** |
-| 手动 | Actions 页面点 `Run workflow` |
+| 推 `v*` tag | 跑完整流程：测试 → 编译三平台 → **发布 Release** |
+| 提 Pull Request | 跑测试 + 编译校验，产物存为 Actions Artifacts（**不发布**） |
+| 手动 | Actions 页面点 `Run workflow`，可用于不发版时验证能否编译 |
+
+**注意**：推送代码到 `main` **不会**触发构建。要出产物就打个 tag：
+
+```bash
+git tag v0.1.1
+git push origin v0.1.1
+```
+
+> tag 名必须与 `Cargo.toml` 里的 `version` 一致（如 tag `v0.1.1` ↔ `version = "0.1.1"`），
+> 不一致时 Release 会直接失败并提示，防止发错版本。
 
 ## 三、三平台测试
 

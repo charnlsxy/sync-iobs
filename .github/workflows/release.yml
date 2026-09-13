@@ -1,11 +1,14 @@
 name: Build & Release
 
+# 只在打 tag 时触发，避免推送 main 时白跑一遍（同一 commit 会跑两次完整流水线）。
+# 跑一次完整流程：test → build(win/mac) → release
 on:
   push:
-    branches: [main, master]
     tags: ["v*"]
+  # PR 仍走测试与编译校验（不发布），便于合并前发现问题
   pull_request:
     branches: [main, master]
+  # 手动触发：可用于不发版时验证能否编译出各平台产物
   workflow_dispatch:
 
 permissions:
@@ -219,6 +222,9 @@ jobs:
           set -eu
           mkdir -p "$OUT_DIR"
           L="${{ matrix.label }}"
+          # 版本号从 Cargo.toml 读取，避免与 tag 不一致
+          VER=$(grep -m1 '^version' Cargo.toml | sed -E 's/.*"([^"]+)".*/\1/')
+          echo "打包版本：$VER"
           # GUI 包：app bundle 形式，双击即用
           rm -rf "SyncIOBS.app"
           mkdir -p "SyncIOBS.app/Contents/MacOS" "SyncIOBS.app/Contents/Resources"
@@ -234,8 +240,8 @@ jobs:
             '  <key>CFBundleName</key><string>SyncIOBS</string>' \
             '  <key>CFBundleDisplayName</key><string>Sync IOBS</string>' \
             '  <key>CFBundleIdentifier</key><string>com.paic.sync-iobs</string>' \
-            '  <key>CFBundleVersion</key><string>0.1.0</string>' \
-            '  <key>CFBundleShortVersionString</key><string>0.1.0</string>' \
+            "  <key>CFBundleVersion</key><string>$VER</string>" \
+            "  <key>CFBundleShortVersionString</key><string>$VER</string>" \
             '  <key>CFBundlePackageType</key><string>APPL</string>' \
             '  <key>CFBundleExecutable</key><string>SyncIOBS</string>' \
             '  <key>LSMinimumSystemVersion</key><string>10.15</string>' \
@@ -267,6 +273,18 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # 防止 tag 名与 Cargo.toml 版本号对不上（如打了 v0.2.0 但代码还是 0.1.0）
+      - name: Check tag matches Cargo.toml version
+        run: |
+          set -eu
+          TAG="${GITHUB_REF_NAME#v}"
+          VER=$(grep -m1 '^version' Cargo.toml | sed -E 's/.*"([^"]+)".*/\1/')
+          echo "tag=$TAG  Cargo.toml=$VER"
+          if [ "$TAG" != "$VER" ]; then
+            echo "::error::tag 名（v$TAG）与 Cargo.toml 版本（$VER）不一致，请先同步版本号"
+            exit 1
+          fi
+
       - name: Download all artifacts
         uses: actions/download-artifact@v4
         with:
@@ -275,6 +293,40 @@ jobs:
 
       - name: Show files
         run: ls -lhR artifacts
+
+      - name: Verify GUI packages really contain a GUI build
+        run: |
+          set -eu
+          cd artifacts
+          # Windows：gui.zip 里的 exe 必须远大于 cli.exe，且含 GUI 依赖特征
+          WIN_CLI=$(stat -c%s sync-iobs-windows-x86_64-cli.exe)
+          unzip -o -q sync-iobs-windows-x86_64-gui.zip -d _win
+          WIN_GUI=$(stat -c%s _win/sync-iobs.exe)
+          echo "Windows: cli=$WIN_CLI  gui=$WIN_GUI"
+          if [ "$WIN_GUI" -le "$WIN_CLI" ]; then
+            echo "::error::Windows gui 包内 exe 不大于 cli，GUI feature 可能未生效"
+            exit 1
+          fi
+          for sym in egui eframe winit glutin; do
+            if ! grep -qi "$sym" _win/sync-iobs.exe; then
+              echo "::error::Windows gui 包内 exe 缺少 GUI 特征串：$sym"
+              exit 1
+            fi
+          done
+          # macOS：cli 单文件必须明显小于 gui 包内的可执行文件
+          for L in arm64 x86_64; do
+            MC=$(stat -c%s "sync-iobs-macos-$L-cli" 2>/dev/null || stat -f%z "sync-iobs-macos-$L-cli")
+            rm -rf "_mac_$L"; mkdir -p "_mac_$L"
+            unzip -o -q "sync-iobs-macos-$L-gui.zip" -d "_mac_$L"
+            MG=$(stat -c%s "_mac_$L/SyncIOBS.app/Contents/MacOS/SyncIOBS" 2>/dev/null || stat -f%z "_mac_$L/SyncIOBS.app/Contents/MacOS/SyncIOBS")
+            echo "macOS-$L: cli=$MC  gui=$MG"
+            if [ "$MG" -le "$MC" ]; then
+              echo "::error::macOS $L gui 包内可执行文件不大于 cli，GUI feature 可能未生效"
+              exit 1
+            fi
+          done
+          rm -rf _win _mac_arm64 _mac_x86_64
+          echo "GUI 包校验通过"
 
       - name: Generate checksums
         run: |

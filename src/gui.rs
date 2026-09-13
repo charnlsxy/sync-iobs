@@ -135,6 +135,8 @@ impl App {
         };
         app.load_history();
         log::push(&app.logs, "INFO", format!("界面已就绪，当前环境：{}", app.env));
+        // 把配置来源也记进日志，便于事后排查「凭据从哪来」
+        log::push(&app.logs, "INFO", app.config_source().0);
         app
     }
 
@@ -381,6 +383,52 @@ fn finish_task(tasks: &Shared, logs: &LogBuf, id: u64, result: Res<String>) {
     }
 }
 
+impl App {
+    /// 「配置来源」说明：当前用的是哪个 iobs.ini、凭据从哪来。
+    /// 目的是让用户一眼看清凭据的来源——否则把 exe 放进已有 iobs.ini 的目录时，
+    /// 会出现「没填 ak/sk 却能用」的困惑（凭据被同名 ini 静默带入）。
+    fn config_source(&self) -> (String, egui::Color32) {
+        let has_cred = !self.cfg.access_key.is_empty() && !self.cfg.secret_key.is_empty();
+        let ok = egui::Color32::from_rgb(22, 163, 74);
+        let warn = egui::Color32::from_rgb(217, 119, 6);
+        let err = egui::Color32::from_rgb(220, 38, 38);
+        match &self.cfg.config_path {
+            Some(p) => {
+                let path = p.display();
+                if has_cred {
+                    let how = if self.cfg.config_explicit {
+                        "--config 指定"
+                    } else {
+                        "按查找顺序命中"
+                    };
+                    (
+                        format!("配置：{}（{}，凭据读自该文件）", path, how),
+                        ok,
+                    )
+                } else {
+                    (format!("配置：{}（该文件里没有凭据）", path), warn)
+                }
+            }
+            None => {
+                if has_cred {
+                    (
+                        "配置：未找到 iobs.ini（凭据来自命令行或环境变量）".to_string(),
+                        warn,
+                    )
+                } else {
+                    (
+                        format!(
+                            "配置：未找到 iobs.ini，使用内置默认值；保存将写入 {}",
+                            self.cfg_path.display()
+                        ),
+                        err,
+                    )
+                }
+            }
+        }
+    }
+}
+
 impl eframe::App for App {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
@@ -433,6 +481,11 @@ impl eframe::App for App {
                     }
                 });
             });
+
+            // 配置来源：如实告知用的是哪个 ini、凭据从哪来
+            let (src_text, src_color) = self.config_source();
+            ui.label(egui::RichText::new(src_text).color(src_color).small());
+
             ui.add_space(4.0);
             ui.separator();
 
@@ -471,7 +524,9 @@ impl eframe::App for App {
                         );
                     });
                     ui.label(
-                        egui::RichText::new(format!("配置落盘：{}", self.cfg_path.display())).weak(),
+                        egui::RichText::new(format!("保存位置：{}", self.cfg_path.display()))
+                            .weak()
+                            .small(),
                     );
                 });
             });

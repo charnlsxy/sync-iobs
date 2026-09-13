@@ -45,6 +45,11 @@ pub struct Config {
     pub insecure: bool,
     pub verbose: bool,
     pub progress: bool,
+    /// 实际加载到的配置文件路径；None 表示没找到任何 iobs.ini（用的是内置默认值）。
+    /// 用于在界面上如实告知「凭据/配置是从哪来的」，避免看起来凭空多出凭据。
+    pub config_path: Option<PathBuf>,
+    /// 该路径是否由 --config/-c 显式指定
+    pub config_explicit: bool,
 }
 
 impl Default for Config {
@@ -64,6 +69,8 @@ impl Default for Config {
             insecure: false,
             verbose: false,
             progress: true,
+            config_path: None,
+            config_explicit: false,
         }
     }
 }
@@ -172,6 +179,11 @@ pub fn resolve_sections(sections: &Sections, opts: &[(String, String)]) -> Res<C
 
 fn build_config(sections: &Sections, opts: &[(String, String)], strict: bool) -> Res<Config> {
     let mut cfg = Config::default();
+
+    // 记录配置来源（供界面展示「当前配置从哪来」），与 load_sections 用同一套查找顺序
+    let explicit = crate::cli::opt(opts, "--config").or_else(|| crate::cli::opt(opts, "-c"));
+    cfg.config_explicit = explicit.is_some();
+    cfg.config_path = find_config(explicit.as_deref());
 
     {
         let common = sections.get("common").cloned().unwrap_or_default();

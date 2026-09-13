@@ -34,8 +34,16 @@ Rust 写的 iobs 文件双向同步命令行工具（上传/下载 + 实时进�
 - 静态产物（GNU）：`RUSTFLAGS="-C target-feature=+crt-static" cargo build --release --target x86_64-pc-windows-gnu`
 
 ## CI / 发布（GitHub Actions）
+- **仓库已上线：`charnlsxy/sync-iobs`（私有）**，Release `v0.1.0` 已发布（Windows x86_64 + macOS arm64/x86_64，各含 gui.zip 与 cli 单文件）
 - workflow `.github/workflows/release.yml`：test(win/mac/linux) → build-windows(MSVC+静态CRT) → build-macos(arm64+x86_64 矩阵) → release(tag `v*` 触发)
 - 一键脚本 `scripts/github-release.sh`（API 建私有仓库+推送+轮询构建）、`scripts/github-status.sh`（查状态/日志/产物）
 - **安全红线**：`iobs.ini`（含真实 ak/sk）必须在 `.gitignore` 里，仓库与 Release 只放 `iobs.ini.example` 脱敏模板；推送脚本有凭据泄露闸门
-- **runner 坑**：`macos-13` 已退役（2025-12-08），Intel 用 `macos-15-intel`，Apple Silicon 用 `macos-14`
+- **源码里也曾内嵌真实凭据**（`src/config.rs` 的 SAMPLE_CONFIG、`src/token.rs` 测试向量、`技术方案.md`），已全部脱敏为虚构值；**改了 SAMPLE_CONFIG 记得同步更新 `config.rs` 里 `ini_and_size` 测试的断言**
+- **runner**：`macos-13` 已退役（2025-12-08），Intel 用 `macos-15-intel`，Apple Silicon 用 `macos-14`
 - CI 用 `x86_64-pc-windows-msvc`；本机 `dist/` 产物不入库
+
+## GitHub API 操作要点（踩坑，重要）
+- **token 类型判别**：`GET /user` 有 `X-OAuth-Scopes` 头 = 经典 token；无该头 = 细粒度 token（GitHub 现在两种都用 `ghp_` 前缀）。细粒度**只读**时，写操作一律返回 **404** 而非 403，别误判成「仓库不存在」。
+- **推送绕过**：`git push` 遇 SSL/502 时的可靠替代 —— `POST /git/blobs` → `POST /git/trees`(带 base_tree) → `POST /git/commits` → `PATCH /git/refs/heads/main`。
+- **拉 Actions 日志**：`/actions/jobs/{id}/logs` 会 302 到 Azure Blob 预签名 URL，**重定向时必须剥掉 Authorization 头**（Bearer/token 直连都 403/401）。日志有 `##[group]` 折叠，要搜 `error(\[E\d+\])?:` 才能看到真正的编译错误。
+- **推送后核对**：`git add` 与 `commit` 之间源码可能被外部改动导致提交中间快照；用 `/contents/{path}` + base64 比对本地/远程是否逐字节一致。
