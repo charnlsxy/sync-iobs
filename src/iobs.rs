@@ -92,6 +92,7 @@ impl Iobs {
         if size > 0 {
             let boundary = format!("---------------------------{}", millis());
             let token = self.token(key);
+            self.client.note("INFO", format!("小文件直传：key={} 文件名={} 大小={}", key, name, human_bytes(size)));
 
             let mut body: Vec<u8> = Vec::with_capacity(size as usize + 1024);
             body.extend_from_slice(
@@ -129,6 +130,7 @@ impl Iobs {
             let ct = format!("multipart/form-data; boundary={}", boundary);
             self.client
                 .post_bytes(&url, &body, &ct, &[("User-Agent", UA)])?;
+            self.client.note("OK", format!("上传成功：{}", key));
         }
         Ok(self.download_url(key))
     }
@@ -140,14 +142,28 @@ impl Iobs {
         // 实测：服务端要求除最后一片外每片 >= 5MB，否则返回 400 EntityTooSmall
         let mut chunk = self.cfg.chunk_size.max(1);
         if chunk < MIN_CHUNK {
-            eprintln!(
-                "警告：分片大小 {} 小于服务端下限，已自动调整为 {}",
-                human_bytes(chunk),
-                human_bytes(MIN_CHUNK)
+            self.client.note(
+                "WARN",
+                format!(
+                    "警告：分片大小 {} 小于服务端下限，已自动调整为 {}",
+                    human_bytes(chunk),
+                    human_bytes(MIN_CHUNK)
+                ),
             );
             chunk = MIN_CHUNK;
         }
         let parts_total = if size == 0 { 1 } else { (size + chunk - 1) / chunk };
+        self.client.note(
+            "INFO",
+            format!(
+                "分片上传：key={} 文件名={} 大小={} 分片={} x {}",
+                key,
+                name,
+                human_bytes(size),
+                parts_total,
+                human_bytes(chunk)
+            ),
+        );
 
         let mut token = self.token(key);
         let mut token_at = Instant::now();
@@ -238,12 +254,14 @@ impl Iobs {
         self.client
             .post_bytes(&done_url, body.as_bytes(), "application/x-www-form-urlencoded; charset=utf-8", &[("User-Agent", UA)])?;
 
+        self.client.note("OK", format!("上传成功（分片合并）：{}", key));
         Ok(self.download_url(key))
     }
 
     /// 下载到本地文件；resume=true 时使用 .part 临时文件 + Range 续传
     pub fn download(&self, key: &str, out: &Path, resume: bool, prog: &mut Progress) -> Res<u64> {
         let url = self.download_url(key);
+        self.client.note("INFO", format!("开始下载：{} -> {}", key, out.display()));
         if let Some(parent) = out.parent() {
             if !parent.as_os_str().is_empty() && !parent.exists() {
                 fs::create_dir_all(parent)?;
@@ -275,7 +293,7 @@ impl Iobs {
             Ok(v) => v,
             Err(e) => {
                 if part.is_some() {
-                    eprintln!("下载中断，已保留 {}，重新执行 --resume 可续传", target.display());
+                    self.client.note("WARN", format!("下载中断，已保留 {}，重新执行 --resume 可续传", target.display()));
                 }
                 return Err(e);
             }
@@ -285,6 +303,10 @@ impl Iobs {
         if let Some(p) = &part {
             fs::rename(p, out)?;
         }
+        self.client.note(
+            "OK",
+            format!("下载完成：{} -> {}（{}）", key, out.display(), human_bytes(got)),
+        );
         Ok(got)
     }
 
@@ -311,6 +333,7 @@ impl Iobs {
         let fname = format!("{}.png", HISTORY_KEY);
         let mut prog = Progress::new("history", 0, false);
         self.upload_small_bytes(HISTORY_KEY, &fname, json.as_bytes(), &mut prog)?;
+        self.client.note("OK", format!("最近上传已更新：{} 条记录", items.len()));
         Ok(())
     }
 }

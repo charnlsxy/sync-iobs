@@ -7,6 +7,7 @@ use crate::config::{self, Config, Sections};
 use crate::error::Res;
 use crate::http::Client;
 use crate::iobs::{HistoryItem, Iobs, HISTORY_KEY};
+use crate::log::{self, LogBuf};
 use crate::progress::{human_bytes, Progress, Shared, TaskState};
 
 const ACCENT: egui::Color32 = egui::Color32::from_rgb(37, 99, 235);
@@ -79,6 +80,9 @@ struct App {
     tasks: Shared,
     next_id: u64,
 
+    logs: LogBuf,
+    log_auto_scroll: bool,
+
     ak: String,
     sk: String,
     cfg_path: PathBuf,
@@ -118,6 +122,8 @@ impl App {
             env,
             tasks: Shared::default(),
             next_id: 1,
+            logs: log::new_buf(),
+            log_auto_scroll: true,
             up_path: String::new(),
             up_key: String::new(),
             up_ext,
@@ -128,6 +134,7 @@ impl App {
             history_done: 0,
         };
         app.load_history();
+        log::push(&app.logs, "INFO", format!("界面已就绪，当前环境：{}", app.env));
         app
     }
 
@@ -184,10 +191,12 @@ impl App {
 
         let cfg = self.cfg.clone();
         let tasks = self.tasks.clone();
+        let logs = self.logs.clone();
         let small_limit = cfg.small_file_limit;
+        log::push(&self.logs, "INFO", format!("开始上传：{}（key={}）", file_name, key));
         std::thread::spawn(move || {
             let result: Res<String> = (|| {
-                let client = Client::new(&cfg)?;
+                let client = Client::new(&cfg, Some(logs.clone()))?;
                 let io = Iobs::new(cfg.clone(), client);
                 let mut prog = Progress::for_shared(id, tasks.clone());
                 let r = if size < small_limit {
@@ -203,7 +212,7 @@ impl App {
                 }
                 Ok(r)
             })();
-            finish_task(&tasks, id, result);
+            finish_task(&tasks, &logs, id, result);
         });
         self.msg = "已开始上传".to_string();
     }
@@ -232,22 +241,24 @@ impl App {
 
         let cfg = self.cfg.clone();
         let tasks = self.tasks.clone();
+        let logs = self.logs.clone();
+        log::push(&self.logs, "INFO", format!("开始下载：{} -> {}", key, out_s));
         std::thread::spawn(move || {
             let result: Res<String> = (|| {
-                let client = Client::new(&cfg)?;
+                let client = Client::new(&cfg, Some(logs.clone()))?;
                 let io = Iobs::new(cfg.clone(), client);
                 let mut prog = Progress::for_shared(id, tasks.clone());
                 io.download(&key, &out, false, &mut prog)?;
                 prog.finish();
                 Ok(String::new())
             })();
-            finish_task(&tasks, id, result);
+            finish_task(&tasks, &logs, id, result);
         });
         self.msg = "已开始下载".to_string();
     }
 
     fn load_history(&mut self) {
-        if let Ok(client) = Client::new(&self.cfg) {
+        if let Ok(client) = Client::new(&self.cfg, Some(self.logs.clone())) {
             let io = Iobs::new(self.cfg.clone(), client);
             self.history = io.load_history();
         }
@@ -280,16 +291,18 @@ impl App {
         let id = self.push_task("下载", &out_name, &key, &out_s, 0);
         let cfg = self.cfg.clone();
         let tasks = self.tasks.clone();
+        let logs = self.logs.clone();
+        log::push(&self.logs, "INFO", format!("从历史下载：{} -> {}", key, out_s));
         std::thread::spawn(move || {
             let result: Res<String> = (|| {
-                let client = Client::new(&cfg)?;
+                let client = Client::new(&cfg, Some(logs.clone()))?;
                 let io = Iobs::new(cfg.clone(), client);
                 let mut prog = Progress::for_shared(id, tasks.clone());
                 io.download(&key, &out, false, &mut prog)?;
                 prog.finish();
                 Ok(String::new())
             })();
-            finish_task(&tasks, id, result);
+            finish_task(&tasks, &logs, id, result);
         });
     }
 
@@ -326,16 +339,23 @@ impl App {
                     Ok(c) => {
                         self.cfg = c;
                         self.msg = format!("已保存到 {}", self.cfg_path.display());
+                        log::push(&self.logs, "INFO", format!("凭据已保存到 {}", self.cfg_path.display()));
                     }
-                    Err(e) => self.msg = format!("刷新配置失败：{}", e),
+                    Err(e) => {
+                        self.msg = format!("刷新配置失败：{}", e);
+                        log::push(&self.logs, "ERR", format!("刷新配置失败：{}", e));
+                    }
                 }
             }
-            Err(e) => self.msg = format!("保存失败：{}", e),
+            Err(e) => {
+                self.msg = format!("保存失败：{}", e);
+                log::push(&self.logs, "ERR", format!("凭据保存失败：{}", e));
+            }
         }
     }
 }
 
-fn finish_task(tasks: &Shared, id: u64, result: Res<String>) {
+fn finish_task(tasks: &Shared, logs: &LogBuf, id: u64, result: Res<String>) {
     if let Ok(mut v) = tasks.lock() {
         if let Some(t) = v.iter_mut().find(|t| t.id == id) {
             match result {
@@ -349,6 +369,13 @@ fn finish_task(tasks: &Shared, id: u64, result: Res<String>) {
                     t.status = "error".to_string();
                     t.error = e.to_string();
                 }
+            }
+            let (kind, name, status, err) =
+                (t.kind.clone(), t.name.clone(), t.status.clone(), t.error.clone());
+            if status == "error" {
+                crate::log::push(logs, "ERR", format!("[{}] {} 失败：{}", kind, name, err));
+            } else if status == "done" {
+                crate::log::push(logs, "OK", format!("[{}] {} 完成", kind, name));
             }
         }
     }
@@ -395,8 +422,13 @@ impl eframe::App for App {
                                 self.sk = c.secret_key.clone();
                                 self.cfg = c;
                                 self.msg = format!("已切换到 {}", self.env);
+                                log::push(&self.logs, "INFO", format!("已切换环境：{} -> {}", self.env, self.cfg.base_url));
+                                self.load_history();
                             }
-                            Err(e) => self.msg = format!("切换失败：{}", e),
+                            Err(e) => {
+                                self.msg = format!("切换失败：{}", e);
+                                log::push(&self.logs, "ERR", format!("切换环境失败：{}", e));
+                            }
                         }
                     }
                 });
@@ -564,6 +596,58 @@ impl eframe::App for App {
                                 }
                             });
                         }
+                    }
+                });
+            });
+
+            ui.add_space(8.0);
+
+            // 操作日志：记录上传/下载/重试/错误等事件，便于排查
+            let entry_count = self.logs.lock().map(|v| v.len()).unwrap_or(0);
+            ui.group(|ui| {
+                ui.vertical(|ui| {
+                    ui.horizontal(|ui| {
+                        ui.label(egui::RichText::new("操作日志").strong());
+                        ui.label(egui::RichText::new(format!("({} 条)", entry_count)).weak());
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            if ui.button("清空日志").clicked() {
+                                log::clear(&self.logs);
+                            }
+                            ui.checkbox(&mut self.log_auto_scroll, "自动滚动");
+                        });
+                    });
+
+                    let entries = log::recent(&self.logs, 200);
+                    if entries.is_empty() {
+                        ui.label(egui::RichText::new("暂无日志").weak());
+                    } else {
+                        let scroll = egui::ScrollArea::vertical()
+                            .id_salt("log_scroll")
+                            .max_height(180.0)
+                            .auto_shrink([false, true]);
+                        let scroll = if self.log_auto_scroll { scroll.stick_to_bottom(true) } else { scroll };
+                        scroll.show(ui, |ui| {
+                            for e in &entries {
+                                ui.horizontal_wrapped(|ui| {
+                                    ui.spacing_mut().item_spacing.x = 6.0;
+                                    ui.label(
+                                        egui::RichText::new(fmt_hms(e.t))
+                                            .monospace()
+                                            .weak()
+                                            .small(),
+                                    );
+                                    let (color, tag) = log_style(e.level);
+                                    ui.label(
+                                        egui::RichText::new(format!("[{}]", tag))
+                                            .color(color)
+                                            .monospace()
+                                            .small()
+                                            .strong(),
+                                    );
+                                    ui.label(egui::RichText::new(&e.msg).monospace().small());
+                                });
+                            }
+                        });
                     }
                 });
             });
@@ -749,6 +833,22 @@ fn fmt_time(secs: u64) -> String {
     let mm = (sod % 3600) / 60;
     let ss = sod % 60;
     format!("{:04}-{:02}-{:02} {:02}:{:02}:{:02}", y, m, d, hh, mm, ss)
+}
+
+/// 日志行只显示时分秒，节省横向空间
+fn fmt_hms(secs: u64) -> String {
+    let sod = secs % 86400;
+    format!("{:02}:{:02}:{:02}", sod / 3600, (sod % 3600) / 60, sod % 60)
+}
+
+/// 日志级别 -> (颜色, 标签)
+fn log_style(level: &str) -> (egui::Color32, &'static str) {
+    match level {
+        "OK" => (egui::Color32::from_rgb(22, 163, 74), "OK  "),
+        "WARN" => (egui::Color32::from_rgb(217, 119, 6), "WARN"),
+        "ERR" => (egui::Color32::from_rgb(220, 38, 38), "ERR "),
+        _ => (egui::Color32::from_rgb(100, 116, 139), "INFO"),
+    }
 }
 
 fn civil_from_days(z: i64) -> (i64, u32, u32) {
