@@ -1,0 +1,24 @@
+# iobs 同步工具配置模板
+# 用 --env <名称> 选择下面的环境段，环境段内的配置优先于 [common]
+#
+# ⚠️ 首次使用请填写 access_key / secret_key（或在 GUI 的「连接凭据」里填写）
+#    本文件不含任何真实凭据，可安全提交到版本库。
+
+[common]
+bucket           = pacz-cbps-dmz-stg
+access_key       =            ; 必填，向管理员索取
+secret_key       =            ; 必填，向管理员索取
+small_file_limit = 10MB       ; 小于该值走小文件直传
+chunk_size       = 5MB        ; 分片大小（服务端下限 5MB，调小会被自动纠正）
+file_ext         = png        ; 服务端保存的文件名后缀（bucket 会拒绝部分后缀）
+timeout          = 60
+retry            = 3
+token_ttl        = 600        ; token 有效期（秒）
+
+# 外网
+[outer]
+base_url = https://stg-iobs-upload.pingan.com.cn
+
+# 内网
+[inner]
+base_url = https://stg-iobs-sf.paic.com.cn

@@ -1,0 +1,25 @@
+/target
+*.log
+
+# 构建产物（由 CI 生成，不入库）
+/dist/sync-iobs.exe
+/pkg-gui/
+/out/
+/artifacts/
+
+# Rust 安装器临时文件
+rustup-init.exe
+rust-install.exe
+probe.js
+install-rust.js
+
+# ⚠️ 含真实 ak/sk 的配置，禁止入库（仓库里只保留 iobs.ini.example 模板）
+/iobs.ini
+/dist/iobs.ini
+**/iobs.local.ini
+
+# 本地日志与临时目录
+/dist/log/
+/tmp/
+pkg-gui
+out

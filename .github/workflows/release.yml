@@ -1,0 +1,246 @@
+name: Build & Release
+
+on:
+  push:
+    branches: [main, master]
+    tags: ["v*"]
+  pull_request:
+    branches: [main, master]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+  # 构建产物统一放到这个目录，便于打包
+  OUT_DIR: out
+
+jobs:
+  # ============ 1. 代码检查与测试 ============
+  test:
+    name: Test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest, ubuntu-latest]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-test-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Install Linux deps (OpenGL / X11 for eframe)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgl1-mesa-dev libxcb-render0-dev libxcb-shape0-dev \
+            libxcb-xfixes0-dev libxkbcommon-dev libssl-dev
+
+      - name: cargo test
+        run: cargo test --locked
+
+      - name: cargo build (no-default-features, CLI only)
+        run: cargo build --locked --no-default-features
+
+  # ============ 2. Windows 构建 ============
+  build-windows:
+    name: Build Windows x86_64
+    runs-on: windows-latest
+    needs: test
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-msvc-${{ hashFiles('**/Cargo.lock') }}
+
+      # GUI 版：默认 feature（eframe + rfd）
+      - name: Build GUI (static CRT)
+        shell: bash
+        run: |
+          cargo build --locked --release --target x86_64-pc-windows-msvc
+        env:
+          RUSTFLAGS: -C target-feature=+crt-static
+
+      # CLI 版：零 GUI 依赖，产物小
+      - name: Build CLI (no-default-features, static CRT)
+        shell: bash
+        run: |
+          cargo build --locked --release --no-default-features --target x86_64-pc-windows-msvc
+        env:
+          RUSTFLAGS: -C target-feature=+crt-static
+
+      - name: Package
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $target = 'x86_64-pc-windows-msvc'
+          New-Item -ItemType Directory -Force -Path $env:OUT_DIR | Out-Null
+
+          # GUI 产物 + 配置模板 + 启动脚本，整包可直接分发
+          # 注意：只打包脱敏模板 iobs.ini.example，绝不打包含真实凭据的 iobs.ini
+          $pkg = 'pkg-gui'
+          Remove-Item -Recurse -Force $pkg -ErrorAction SilentlyContinue
+          New-Item -ItemType Directory -Force -Path $pkg | Out-Null
+
+          Copy-Item "target/$target/release/sync-iobs.exe" "$pkg/sync-iobs.exe"
+          Copy-Item 'iobs.ini.example' "$pkg/iobs.ini"
+
+          # bat 用 CRLF 换行，Windows 下双击才正常
+          $gui = "@echo off`r`n`"%~dp0sync-iobs.exe`"`r`n"
+          $cli = "@echo off`r`n`"%~dp0sync-iobs.exe`" %*`r`n"
+          [IO.File]::WriteAllText((Join-Path $pwd "$pkg/run-gui.bat"), $gui)
+          [IO.File]::WriteAllText((Join-Path $pwd "$pkg/run-cli.bat"), $cli)
+
+          Compress-Archive -Path "$pkg/*" -DestinationPath "$env:OUT_DIR/sync-iobs-windows-x86_64-gui.zip" -Force
+
+          # CLI 单文件
+          Copy-Item "target/$target/release/sync-iobs.exe" "$env:OUT_DIR/sync-iobs-windows-x86_64-cli.exe"
+
+          Get-ChildItem $env:OUT_DIR | Select-Object Name, @{n='MB';e={[math]::Round($_.Length/1MB,2)}} | Format-Table
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-x86_64
+          path: ${{ env.OUT_DIR }}/*
+          if-no-files-found: error
+
+  # ============ 3. macOS 双架构构建 ============
+  build-macos:
+    name: Build macOS ${{ matrix.arch }}
+    runs-on: ${{ matrix.runner }}
+    needs: test
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Apple Silicon（M 系列）。macos-14 是当前稳定可用的 arm64 标签
+          - arch: aarch64-apple-darwin
+            runner: macos-14
+            label: arm64
+          # Intel 芯片。注意：macos-13 已于 2025-12-08 退役，
+          # Intel 必须使用 macos-15-intel（官方最后一个 x86_64 镜像，支持到 2027-08）
+          - arch: x86_64-apple-darwin
+            runner: macos-15-intel
+            label: x86_64
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.arch }}
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-${{ matrix.label }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Build GUI
+        run: cargo build --locked --release --target ${{ matrix.arch }}
+
+      - name: Build CLI (no-default-features)
+        run: cargo build --locked --release --no-default-features --target ${{ matrix.arch }}
+
+      - name: Package
+        run: |
+          set -eu
+          mkdir -p "$OUT_DIR"
+          T="${{ matrix.arch }}"
+          L="${{ matrix.label }}"
+          # GUI 包：app bundle 形式，双击即用
+          rm -rf "SyncIOBS.app"
+          mkdir -p "SyncIOBS.app/Contents/MacOS" "SyncIOBS.app/Contents/Resources"
+          cp "target/$T/release/sync-iobs" "SyncIOBS.app/Contents/MacOS/SyncIOBS"
+          chmod +x "SyncIOBS.app/Contents/MacOS/SyncIOBS"
+          cp iobs.ini.example "SyncIOBS.app/Contents/Resources/iobs.ini"
+          # Info.plist：heredoc 用 <<- 加 TAB 缩进，输出无多余空格
+          printf '%s\n' \
+            '<?xml version="1.0" encoding="UTF-8"?>' \
+            '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">' \
+            '<plist version="1.0">' \
+            '<dict>' \
+            '  <key>CFBundleName</key><string>SyncIOBS</string>' \
+            '  <key>CFBundleDisplayName</key><string>Sync IOBS</string>' \
+            '  <key>CFBundleIdentifier</key><string>com.paic.sync-iobs</string>' \
+            '  <key>CFBundleVersion</key><string>0.1.0</string>' \
+            '  <key>CFBundleShortVersionString</key><string>0.1.0</string>' \
+            '  <key>CFBundlePackageType</key><string>APPL</string>' \
+            '  <key>CFBundleExecutable</key><string>SyncIOBS</string>' \
+            '  <key>LSMinimumSystemVersion</key><string>10.15</string>' \
+            '  <key>NSHighResolutionCapable</key><true/>' \
+            '</dict>' \
+            '</plist>' \
+            > "SyncIOBS.app/Contents/Info.plist"
+          # 校验 plist 合法性（不合法会让 app 无法启动）
+          plutil -lint "SyncIOBS.app/Contents/Info.plist"
+          zip -qry "$OUT_DIR/sync-iobs-macos-$L-gui.zip" "SyncIOBS.app"
+          # CLI 单文件
+          cp "target/$T/release/sync-iobs" "$OUT_DIR/sync-iobs-macos-$L-cli"
+          chmod +x "$OUT_DIR/sync-iobs-macos-$L-cli"
+          ls -lh "$OUT_DIR"
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-${{ matrix.label }}
+          path: ${{ env.OUT_DIR }}/*
+          if-no-files-found: error
+
+  # ============ 4. 发布 Release ============
+  release:
+    name: Publish Release
+    runs-on: ubuntu-latest
+    needs: [build-windows, build-macos]
+    if: startsWith(github.ref, 'refs/tags/v')
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Show files
+        run: ls -lhR artifacts
+
+      - name: Generate checksums
+        run: |
+          cd artifacts
+          sha256sum * > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/*
+          generate_release_notes: true
+          draft: false
+          fail_on_unmatched_files: true
