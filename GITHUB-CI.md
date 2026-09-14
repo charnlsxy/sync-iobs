@@ -24,8 +24,9 @@
 | 动作 | 结果 |
 |---|---|
 | 推 `v*` tag | 跑完整流程：测试 → 编译三平台 → **发布 Release** |
-| 提 Pull Request | 跑测试 + 编译校验，产物存为 Actions Artifacts（**不发布**） |
-| 手动 | Actions 页面点 `Run workflow`，可用于不发版时验证能否编译 |
+| 手动 | Actions 页面点 `Run workflow`，只跑测试与编译（**不会发版**），用于验证能否编译 |
+
+**分支推送（main / master）和 Pull Request 都不会触发任何构建** —— 唯一的自动部署入口是 tag。
 
 **注意**：推送代码到 `main` **不会**触发构建。要出产物就打个 tag：
 

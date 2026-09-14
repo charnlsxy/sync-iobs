@@ -26,8 +26,8 @@ pub fn run(cfg: Config, sections: Sections) -> Result<(), Box<dyn std::error::Er
         options,
         Box::new(move |cc| {
             setup_style(&cc.egui_ctx);
-            setup_fonts(&cc.egui_ctx);
-            Ok(Box::new(App::new(cfg, sections)))
+            let font_used = setup_fonts(&cc.egui_ctx);
+            Ok(Box::new(App::new(cfg, sections, font_used)))
         }),
     )?;
     Ok(())
@@ -48,17 +48,41 @@ fn setup_style(ctx: &egui::Context) {
     ctx.set_theme(egui::Theme::Light);
 }
 
-/// egui 内置字体不含中文，必须挂一个系统字体，否则中文全是方块
-fn setup_fonts(ctx: &egui::Context) {
-    let candidates = [
+/// egui 内置字体不含中文，必须挂一个系统中文字体，否则中文全是方块。
+///
+/// 按平台依次尝试：Windows → macOS → Linux。
+/// 注意 macOS 的中文字体多是 `.ttc`（字体集合），egui 0.36 底层用
+/// `skrifa::FontRef::from_index` 解析，原生支持 ttc，取 index 0（PingFang SC 字面）即可。
+///
+/// 返回实际加载成功的字体路径；None 表示都没找到（界面中文会显示异常）。
+fn setup_fonts(ctx: &egui::Context) -> Option<String> {
+    let candidates: &[&str] = &[
+        // Windows
         "C:\\Windows\\Fonts\\simhei.ttf",
         "C:\\Windows\\Fonts\\Deng.ttf",
         "C:\\Windows\\Fonts\\msyh.ttc",
         "C:\\Windows\\Fonts\\simsun.ttc",
+        // macOS
+        "/System/Library/Fonts/PingFang.ttc",
+        "/System/Library/Fonts/STHeiti Medium.ttc",
+        "/System/Library/Fonts/STHeiti Light.ttc",
+        "/System/Library/Fonts/Hiragino Sans GB.ttc",
+        "/System/Library/Fonts/Supplemental/Songti.ttc",
+        "/System/Library/Fonts/Supplemental/STHeiti Medium.ttc",
+        "/Library/Fonts/Arial Unicode.ttf",
+        // Linux
+        "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+        "/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc",
+        "/usr/share/fonts/truetype/wqy/wqy-microhei.ttc",
+        "/usr/share/fonts/truetype/arphic/uming.ttc",
     ];
     let mut fonts = egui::FontDefinitions::default();
     for (i, path) in candidates.iter().enumerate() {
+        // 目录项（比如 /System/Library/Fonts/Supplemental/ 不存在时）读出来是空的
         if let Ok(bytes) = std::fs::read(path) {
+            if bytes.is_empty() {
+                continue;
+            }
             let name = format!("cn{}", i);
             fonts
                 .font_data
@@ -66,10 +90,12 @@ fn setup_fonts(ctx: &egui::Context) {
             for family in [egui::FontFamily::Proportional, egui::FontFamily::Monospace] {
                 fonts.families.entry(family).or_default().insert(0, name.clone());
             }
-            break;
+            ctx.set_fonts(fonts);
+            return Some((*path).to_string());
         }
     }
     ctx.set_fonts(fonts);
+    None
 }
 
 struct App {
@@ -99,7 +125,7 @@ struct App {
 }
 
 impl App {
-    fn new(cfg: Config, sections: Sections) -> App {
+    fn new(cfg: Config, sections: Sections, font_used: Option<String>) -> App {
         let env = cfg.env.clone();
         let up_ext = cfg.file_ext.clone().unwrap_or_default();
         let mut envs: Vec<String> = sections
@@ -137,6 +163,15 @@ impl App {
         log::push(&app.logs, "INFO", format!("界面已就绪，当前环境：{}", app.env));
         // 把配置来源也记进日志，便于事后排查「凭据从哪来」
         log::push(&app.logs, "INFO", app.config_source().0);
+        // 中文字体加载情况：没加载到时中文会显示成方块，这里明确提示
+        match &font_used {
+            Some(p) => log::push(&app.logs, "INFO", format!("中文字体：{}", p)),
+            None => log::push(
+                &app.logs,
+                "WARN",
+                "未找到系统中文字体，界面中文可能显示为方块".to_string(),
+            ),
+        }
         app
     }
 

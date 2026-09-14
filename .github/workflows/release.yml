@@ -1,14 +1,12 @@
 name: Build & Release
 
-# 只在打 tag 时触发，避免推送 main 时白跑一遍（同一 commit 会跑两次完整流水线）。
-# 跑一次完整流程：test → build(win/mac) → release
+# 只认 tag：分支推送（main / master）和 PR 都不再触发，避免同一个 commit 被跑两遍。
+# 唯一的自动部署入口就是推 v* tag，跑一次完整流程：test → build(win/mac) → release
 on:
   push:
     tags: ["v*"]
-  # PR 仍走测试与编译校验（不发布），便于合并前发现问题
-  pull_request:
-    branches: [main, master]
-  # 手动触发：可用于不发版时验证能否编译出各平台产物
+  # 手动触发：只跑测试与编译，**不会发版**（release job 有 refs/tags 判断），
+  # 用于不发版时验证代码能否在各平台编译通过
   workflow_dispatch:
 
 permissions:
