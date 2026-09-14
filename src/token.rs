@@ -166,8 +166,8 @@ mod tests {
         // 对 base64url(scope JSON) 做 HMAC-SHA1，拼成 ak:sign:msg）。
         // 注意：此处使用**虚构凭据**，仅用于校验签名算法的正确性。
         let s = Signer::new("TESTACCESSKEY000000000000", "TESTSECRETKEY000000000000");
-        let got = s.token_at("pacz-cbps-dmz-stg", "f14d1f59-767b-404e-93b0-82454786d981", 1732761165);
-        let want = "TESTACCESSKEY000000000000:XVLxWj6SoN9LF9ufU-6dP1tHbGE=:eyJzY29wZSI6InBhY3otY2Jwcy1kbXotc3RnOmYxNGQxZjU5LTc2N2ItNDA0ZS05M2IwLTgyNDU0Nzg2ZDk4MSIsImRlYWRsaW5lIjoxNzMyNzYxMTY1fQ==";
+        let got = s.token_at("test-bucket", "f14d1f59-767b-404e-93b0-82454786d981", 1732761165);
+        let want = "TESTACCESSKEY000000000000:iaT60tYaaEAUHZfSgv5qEob40ww=:eyJzY29wZSI6InRlc3QtYnVja2V0OmYxNGQxZjU5LTc2N2ItNDA0ZS05M2IwLTgyNDU0Nzg2ZDk4MSIsImRlYWRsaW5lIjoxNzMyNzYxMTY1fQ==";
         assert_eq!(got, want);
     }
 

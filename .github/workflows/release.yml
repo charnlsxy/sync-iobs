@@ -237,7 +237,7 @@ jobs:
             '<dict>' \
             '  <key>CFBundleName</key><string>SyncIOBS</string>' \
             '  <key>CFBundleDisplayName</key><string>Sync IOBS</string>' \
-            '  <key>CFBundleIdentifier</key><string>com.paic.sync-iobs</string>' \
+            "  <key>CFBundleIdentifier</key><string>com.example.sync-iobs</string>" \
             "  <key>CFBundleVersion</key><string>$VER</string>" \
             "  <key>CFBundleShortVersionString</key><string>$VER</string>" \
             '  <key>CFBundlePackageType</key><string>APPL</string>' \

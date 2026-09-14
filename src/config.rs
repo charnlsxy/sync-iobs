@@ -10,8 +10,11 @@ pub const SAMPLE_CONFIG: &str = r###"
 # 用 --env <名称> 选择下面任意一个环境段（名字可自由增删）
 # 请填写自己的 access_key / secret_key（或使用 GUI 的「连接凭据」）
 
+# 请填写自己的服务地址 / bucket / access_key / secret_key
+# 下方地址与桶名只是占位示例，必须替换成实际值
+
 [common]
-bucket           = pacz-cbps-dmz-stg
+bucket           =
 access_key       =
 secret_key       =
 small_file_limit = 10MB
@@ -20,13 +23,12 @@ timeout          = 60
 retry            = 3
 token_ttl        = 600
 
-# 外网
+# 环境段名字可自由增删；运行时用 --env <名称> 选择，段内配置优先于 [common]
 [outer]
-base_url = https://stg-iobs-upload.pingan.com.cn
+base_url = https://iobs.example.com
 
-# 内网
 [inner]
-base_url = https://stg-iobs-sf.paic.com.cn
+base_url = https://iobs-inner.example.com
 "###;
 
 #[derive(Debug, Clone)]
@@ -56,8 +58,8 @@ impl Default for Config {
     fn default() -> Self {
         Config {
             env: "outer".to_string(),
-            base_url: "https://stg-iobs.pingan.com.cn".to_string(),
-            bucket: "pacz-cbps-dmz-stg".to_string(),
+            base_url: String::new(),
+            bucket: String::new(),
             access_key: String::new(),
             secret_key: String::new(),
             small_file_limit: 10 * 1024 * 1024,
@@ -292,6 +294,13 @@ fn build_config(sections: &Sections, opts: &[(String, String)], strict: bool) ->
     if strict && (cfg.access_key.is_empty() || cfg.secret_key.is_empty()) {
         return fail(2, "缺少 access_key / secret_key：请配置 iobs.ini，或用 --ak/--sk、IOBS_AK/IOBS_SK 提供");
     }
+    // 地址与桶名不再内置任何默认值，缺了要明确报出来，避免拼出莫名其妙的 URL
+    if strict && cfg.base_url.is_empty() {
+        return fail(2, "缺少 base_url：请在 iobs.ini 的环境段里配置，或用 --base-url / IOBS_BASE_URL 提供");
+    }
+    if strict && cfg.bucket.is_empty() {
+        return fail(2, "缺少 bucket：请在 iobs.ini 的 [common] 里配置，或用 --bucket / IOBS_BUCKET 提供");
+    }
     if cfg.chunk_size == 0 {
         cfg.chunk_size = 5 * 1024 * 1024;
     }
@@ -334,9 +343,8 @@ mod tests {
     #[test]
     fn ini_and_size() {
         let s = parse_ini(SAMPLE_CONFIG);
-        assert_eq!(s["common"]["bucket"], "pacz-cbps-dmz-stg");
-        assert_eq!(s["outer"]["base_url"], "https://stg-iobs-upload.pingan.com.cn");
-        assert_eq!(s["inner"]["base_url"], "https://stg-iobs-sf.paic.com.cn");
+        assert_eq!(s["outer"]["base_url"], "https://iobs.example.com");
+        assert_eq!(s["inner"]["base_url"], "https://iobs-inner.example.com");
         assert_eq!(parse_size("10MB"), Some(10 * 1024 * 1024));
         assert_eq!(parse_size("512"), Some(512));
         assert_eq!(parse_size("1GB"), Some(1024 * 1024 * 1024));

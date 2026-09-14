@@ -51,21 +51,25 @@ RUSTFLAGS="-C target-feature=+crt-static" cargo build --release --target x86_64-
 
 ```ini
 [common]
-bucket           = pacz-cbps-dmz-stg
-access_key       = ...
-secret_key       = ...
+bucket           = your-bucket   ; 必填
+access_key       = ...           ; 必填
+secret_key       = ...           ; 必填
 small_file_limit = 10MB    ; 小于该值走小文件直传
 chunk_size       = 5MB     ; 分片大小
 timeout          = 60
 retry            = 3
 token_ttl        = 600     ; token 有效期（秒）
 
+# 环境段名字可自由增删，运行时用 --env <名称> 选择；地址按你的实际环境填
 [outer]
-base_url = https://stg-iobs.pingan.com.cn
+base_url = https://iobs.example.com
 
 [inner]
-base_url = https://stg-iobs-sf.paic.com.cn
+base_url = https://iobs-inner.example.com
 ```
+
+> `base_url`、`bucket`、`access_key`、`secret_key` **都没有内置默认值**，必须配置后程序才能工作；
+> 缺哪一项都会在启动时明确报错并提示补齐方式。
 
 `--env` 后面跟的是 section 名，可任意增删环境段；环境段内的配置优先于 `[common]`。
 
