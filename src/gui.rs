@@ -123,10 +123,12 @@ struct App {
     msg: String,
 
     history: Vec<HistoryItem>,
-    history_done: u64,
     /// 历史记录异步拉取：绝不能在 UI 线程里做网络请求，否则界面会卡住
     history_loading: Arc<AtomicBool>,
     history_pending: Arc<Mutex<Option<Vec<HistoryItem>>>>,
+    /// 需要重新拉取历史。由**上传线程在写回记录成功后**置位，
+    /// 这样能保证「先写完再拉取」的时序；UI 只负责取这个标记并触发。
+    history_refresh: Arc<AtomicBool>,
 }
 
 impl App {
@@ -162,9 +164,9 @@ impl App {
             dl_out: String::new(),
             msg: String::new(),
             history: Vec::new(),
-            history_done: 0,
             history_loading: Arc::new(AtomicBool::new(false)),
             history_pending: Arc::new(Mutex::new(None)),
+            history_refresh: Arc::new(AtomicBool::new(false)),
         };
         app.load_history_async();
         log::push(&app.logs, "INFO", format!("界面已就绪，当前环境：{}", app.env));
@@ -236,6 +238,7 @@ impl App {
         let cfg = self.cfg.clone();
         let tasks = self.tasks.clone();
         let logs = self.logs.clone();
+        let refresh = self.history_refresh.clone();
         let small_limit = cfg.small_file_limit;
         log::push(&self.logs, "INFO", format!("开始上传：{}（key={}）", file_name, key));
         std::thread::spawn(move || {
@@ -251,8 +254,14 @@ impl App {
                 // 先把本次上传写入最近记录（等写回 iobs 后再结束，保证历史是最新的）
                 let rec = io.record_upload(&key, &name);
                 prog.finish();
-                if let Err(e) = rec {
-                    let _ = e;
+                match rec {
+                    Ok(()) => {
+                        // 写回成功，通知界面重新拉取。
+                        // 必须由这里置位（而不是界面猜「任务完成了」），
+                        // 才能保证「先写完、再拉取」的时序。
+                        refresh.store(true, Ordering::SeqCst);
+                    }
+                    Err(e) => log::push(&logs, "WARN", format!("写入历史记录失败：{}", e)),
                 }
                 Ok(r)
             })();
@@ -306,28 +315,41 @@ impl App {
     /// 原来这里是同步的 `load_history()`：在 UI 线程里直接发 HTTP 请求，
     /// 一次网络往返几百毫秒，期间界面完全冻结（切环境、点刷新、任务完成时都会触发）。
     /// 改成后台线程拉取，结果放进 `history_pending`，由 `ui()` 每帧取回。
-    fn load_history_async(&mut self) {
+    /// 返回值：true 表示真的发起了请求；false 表示没发起（缺凭据，或上一轮还在飞）。
+    /// 调用方据此决定是否保留「待刷新」标记 —— 否则一旦被跳过就再也不会重试。
+    fn load_history_async(&mut self) -> bool {
         if self.cfg.access_key.is_empty() || self.cfg.secret_key.is_empty() {
-            return;
+            return false;
         }
         // 上一轮还没回来就跳过，避免重复请求
         if self.history_loading.swap(true, Ordering::SeqCst) {
-            return;
+            return false;
         }
         let cfg = self.cfg.clone();
         let logs = self.logs.clone();
         let pending = self.history_pending.clone();
         let loading = self.history_loading.clone();
         std::thread::spawn(move || {
+            // 守卫：即使线程内 panic，也会把 loading 复位，
+            // 否则标记永远卡在 true，历史记录就再也不刷新了
+            let _guard = LoadingGuard(loading.clone());
             let items = match Client::new(&cfg, Some(logs.clone())) {
                 Ok(client) => Iobs::new(cfg, client).load_history(),
                 Err(_) => Vec::new(),
             };
-            if let Ok(mut g) = pending.lock() {
-                *g = Some(items);
-            }
-            loading.store(false, Ordering::SeqCst);
+            let mut g = match pending.lock() {
+                Ok(g) => g,
+                // 之前有线程持锁 panic 过 → 恢复数据而不是让界面永远拿不到结果
+                Err(poisoned) => poisoned.into_inner(),
+            };
+            *g = Some(items);
         });
+        true
+    }
+
+    /// 标记一次历史刷新请求（点「刷新」、切换环境时用）
+    fn request_history_refresh(&self) {
+        self.history_refresh.store(true, Ordering::SeqCst);
     }
 
     /// 从历史记录一键下载：保存到 dl_out（留空则当前目录），文件名用记录里的原始文件名
@@ -498,22 +520,26 @@ impl eframe::App for App {
         let ctx = ui.ctx().clone();
 
         // 取回后台线程拉好的历史记录
-        if let Ok(mut g) = self.history_pending.lock() {
+        {
+            let mut g = match self.history_pending.lock() {
+                Ok(g) => g,
+                Err(poisoned) => poisoned.into_inner(),
+            };
             if let Some(items) = g.take() {
                 self.history = items;
             }
         }
 
-        // 有上传任务完成时自动刷新历史（走异步，不阻塞界面）
-        {
-            let done = self
-                .tasks
-                .lock()
-                .map(|v| v.iter().filter(|t| t.status == "done").count() as u64)
-                .unwrap_or(0);
-            if done > self.history_done {
-                self.history_done = done;
-                self.load_history_async();
+        // 需要刷新（上传线程写回成功后置位 / 点刷新 / 切环境）就发起一次异步拉取。
+        // 若此刻正好有请求在飞，load_history_async 会返回 false，
+        // 那就把标记放回去，下一帧再试 —— 不能像之前那样乐观地认为已经刷新过了。
+        if self.history_refresh.swap(false, Ordering::SeqCst) {
+            if !self.load_history_async() {
+                // 只有当「有请求在飞」时才把标记放回去等下一帧；
+                // 若是因为没配凭据而失败，就丢弃，避免标记永远挂着
+                if self.history_loading.load(Ordering::SeqCst) {
+                    self.history_refresh.store(true, Ordering::SeqCst);
+                }
             }
         }
 
@@ -588,7 +614,7 @@ impl App {
                                 self.cfg = c;
                                 self.msg = format!("已切换到 {}", self.env);
                                 log::push(&self.logs, "INFO", format!("已切换环境：{} -> {}", self.env, self.cfg.base_url));
-                                self.load_history_async();
+                                self.request_history_refresh();
                             }
                             Err(e) => {
                                 self.msg = format!("切换失败：{}", e);
@@ -747,7 +773,7 @@ impl App {
                         );
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             if ui.button("刷新").clicked() {
-                                self.load_history_async();
+                                self.request_history_refresh();
                             }
                         });
                     });
@@ -796,8 +822,6 @@ impl App {
                     if let Ok(mut v) = self.tasks.lock() {
                         v.retain(|t| t.status == "running");
                     }
-                    // 清空后重新允许「任务完成 → 刷新历史」触发一次
-                    self.history_done = 0;
                 }
             });
         });
@@ -977,6 +1001,14 @@ impl App {
                 });
             });
         });
+    }
+}
+
+/// 保证 `history_loading` 一定会被复位（Drop 在线程结束或 panic 时都会执行）
+struct LoadingGuard(Arc<AtomicBool>);
+impl Drop for LoadingGuard {
+    fn drop(&mut self) {
+        self.0.store(false, Ordering::SeqCst);
     }
 }
 
