@@ -12,7 +12,21 @@ use crate::iobs::{HistoryItem, Iobs, HISTORY_KEY};
 use crate::log::{self, LogBuf};
 use crate::progress::{human_bytes, Progress, Shared, TaskState};
 
+// —— 设计色板（浅色）——
 const ACCENT: egui::Color32 = egui::Color32::from_rgb(37, 99, 235);
+const ACCENT_SOFT: egui::Color32 = egui::Color32::from_rgb(239, 246, 255);
+const PAGE_BG: egui::Color32 = egui::Color32::from_rgb(247, 248, 250);
+const CARD_BG: egui::Color32 = egui::Color32::from_rgb(255, 255, 255);
+const BORDER: egui::Color32 = egui::Color32::from_rgb(229, 231, 235);
+const BORDER_STRONG: egui::Color32 = egui::Color32::from_rgb(209, 213, 219);
+const TEXT: egui::Color32 = egui::Color32::from_rgb(17, 24, 39);
+const TEXT_MUTED: egui::Color32 = egui::Color32::from_rgb(107, 114, 128);
+const TEXT_FAINT: egui::Color32 = egui::Color32::from_rgb(156, 163, 175);
+const OK: egui::Color32 = egui::Color32::from_rgb(22, 163, 74);
+const OK_SOFT: egui::Color32 = egui::Color32::from_rgb(236, 253, 245);
+const WARN: egui::Color32 = egui::Color32::from_rgb(217, 119, 6);
+const DANGER: egui::Color32 = egui::Color32::from_rgb(220, 38, 38);
+const DANGER_SOFT: egui::Color32 = egui::Color32::from_rgb(254, 242, 242);
 
 pub fn run(cfg: Config, sections: Sections) -> Result<(), Box<dyn std::error::Error>> {
     hide_console();
@@ -38,16 +52,109 @@ pub fn run(cfg: Config, sections: Sections) -> Result<(), Box<dyn std::error::Er
 fn setup_style(ctx: &egui::Context) {
     let mut style = (*ctx.style_of(egui::Theme::Light)).clone();
     style.visuals = egui::Visuals::light();
+
+    // 留白：比默认松一些，缓解「太拥挤」
+    style.spacing.item_spacing = egui::vec2(10.0, 10.0);
+    style.spacing.button_padding = egui::vec2(16.0, 7.0);
+
+    let v = &mut style.visuals;
+    v.panel_fill = PAGE_BG;
+    v.window_fill = PAGE_BG;
+    v.extreme_bg_color = CARD_BG;
+    v.selection.bg_fill = ACCENT_SOFT;
+    v.selection.stroke = egui::Stroke::new(1.0, ACCENT);
+
     let r = egui::CornerRadius::same(6);
-    style.visuals.widgets.noninteractive.corner_radius = r;
-    style.visuals.widgets.inactive.corner_radius = r;
-    style.visuals.widgets.hovered.corner_radius = r;
-    style.visuals.widgets.active.corner_radius = r;
-    style.visuals.widgets.inactive.weak_bg_fill = egui::Color32::from_rgb(243, 244, 246);
-    style.spacing.item_spacing = egui::vec2(8.0, 7.0);
-    style.spacing.button_padding = egui::vec2(12.0, 6.0);
+    for w in [
+        &mut v.widgets.noninteractive,
+        &mut v.widgets.inactive,
+        &mut v.widgets.hovered,
+        &mut v.widgets.active,
+        &mut v.widgets.open,
+    ] {
+        w.corner_radius = r;
+    }
+
+    // 输入类控件：白底 + 细边框，聚焦时强调色描边
+    v.widgets.inactive.bg_fill = CARD_BG;
+    v.widgets.inactive.bg_stroke = egui::Stroke::new(1.0, BORDER);
+    v.widgets.hovered.bg_fill = CARD_BG;
+    v.widgets.hovered.bg_stroke = egui::Stroke::new(1.0, BORDER_STRONG);
+    v.widgets.active.bg_fill = CARD_BG;
+    v.widgets.active.bg_stroke = egui::Stroke::new(1.5, ACCENT);
+    v.widgets.open.bg_fill = CARD_BG;
+    v.widgets.open.bg_stroke = egui::Stroke::new(1.5, ACCENT);
+
     ctx.set_style_of(egui::Theme::Light, style);
     ctx.set_theme(egui::Theme::Light);
+}
+
+/// 卡片容器：白底 + 细边框 + 圆角 + 内边距（替掉原来厚重的 group 框）
+fn card<R>(ui: &mut egui::Ui, add: impl FnOnce(&mut egui::Ui) -> R) -> R {
+    egui::Frame::NONE
+        .fill(CARD_BG)
+        .stroke(egui::Stroke::new(1.0, BORDER))
+        .corner_radius(egui::CornerRadius::same(10))
+        .inner_margin(egui::Margin::same(12))
+        .show(ui, |ui| {
+            ui.set_min_width(ui.available_width());
+            add(ui)
+        })
+        .inner
+}
+
+/// 分区标题
+fn section_title(ui: &mut egui::Ui, text: &str) {
+    ui.label(egui::RichText::new(text).size(13.5).color(TEXT).strong());
+}
+
+/// 表单行：标签固定宽度且右对齐，控件起点统一（解决排版参差）
+fn form_row<R>(ui: &mut egui::Ui, label: &str, add: impl FnOnce(&mut egui::Ui) -> R) -> R {
+    ui.horizontal(|ui| {
+        ui.allocate_ui_with_layout(
+            egui::vec2(54.0, 22.0),
+            egui::Layout::right_to_left(egui::Align::Center),
+            |ui| {
+                ui.label(egui::RichText::new(label).color(TEXT_MUTED).small());
+            },
+        );
+        add(ui)
+    })
+    .inner
+}
+
+/// 主操作按钮
+fn primary_button(ui: &mut egui::Ui, text: &str) -> bool {
+    ui.add(
+        egui::Button::new(egui::RichText::new(text).color(egui::Color32::WHITE).strong())
+            .fill(ACCENT)
+            .corner_radius(egui::CornerRadius::same(6))
+            .min_size(egui::vec2(88.0, 28.0)),
+    )
+    .clicked()
+}
+
+/// 次要按钮
+fn ghost_button(ui: &mut egui::Ui, text: &str) -> bool {
+    ui.add(
+        egui::Button::new(egui::RichText::new(text).color(TEXT_MUTED))
+            .fill(CARD_BG)
+            .stroke(egui::Stroke::new(1.0, BORDER))
+            .corner_radius(egui::CornerRadius::same(6))
+            .min_size(egui::vec2(72.0, 28.0)),
+    )
+    .clicked()
+}
+
+/// 状态小标签
+fn chip(ui: &mut egui::Ui, text: &str, fg: egui::Color32, bg: egui::Color32) {
+    egui::Frame::NONE
+        .fill(bg)
+        .corner_radius(egui::CornerRadius::same(4))
+        .inner_margin(egui::Margin::same(4))
+        .show(ui, |ui| {
+            ui.label(egui::RichText::new(text).color(fg).small().strong());
+        });
 }
 
 /// egui 内置字体不含中文，必须挂一个系统中文字体，否则中文全是方块。
@@ -110,6 +217,12 @@ struct App {
 
     logs: LogBuf,
     log_auto_scroll: bool,
+    /// 操作日志是否展开（默认折叠，避免占地方）
+    log_open: bool,
+    /// 日志渲染缓存：只在日志条数变化时重新拷贝。
+    /// 原来每帧都 `log::recent()` 克隆 60 条（含 String），传输过程中日志不变时纯属浪费。
+    log_cache: Vec<crate::log::LogEntry>,
+    log_cache_len: usize,
 
     ak: String,
     sk: String,
@@ -132,18 +245,37 @@ struct App {
 }
 
 impl App {
-    fn new(cfg: Config, sections: Sections, font_used: Option<String>) -> App {
-        let env = cfg.env.clone();
+    fn new(mut cfg: Config, sections: Sections, font_used: Option<String>) -> App {
         let up_ext = cfg.file_ext.clone().unwrap_or_default();
+        // 环境段只认 ini 里真实存在的 section —— 不再硬塞默认值，
+        // 否则没配 [outer] 也会在下拉框里看到它
         let mut envs: Vec<String> = sections
             .keys()
             .filter(|k| k.as_str() != "common")
             .cloned()
             .collect();
         envs.sort();
-        if !envs.contains(&env) {
-            envs.push(env.clone());
+
+        // 环境优先级：上次使用的 > 配置里的默认 > 第一个环境段
+        let mut env = cfg.env.clone();
+        if let Some(last) = load_last_env() {
+            if envs.contains(&last) {
+                env = last;
+            }
         }
+        if envs.is_empty() {
+            env = cfg.env.clone();
+        } else if !envs.contains(&env) {
+            env = envs.first().cloned().unwrap_or_default();
+        }
+        // 用最终环境重建配置（base_url 等取自对应 section）
+        if !env.is_empty() {
+            let opts = vec![("--env".to_string(), env.clone())];
+            if let Ok(c) = config::resolve_sections_relaxed(&sections, &opts) {
+                cfg = c;
+            }
+        }
+        let env = cfg.env.clone();
         let cfg_path = config::default_config_path();
         let mut app = App {
             ak: cfg.access_key.clone(),
@@ -157,6 +289,9 @@ impl App {
             next_id: 1,
             logs: log::new_buf(),
             log_auto_scroll: true,
+            log_open: false,
+            log_cache: Vec::new(),
+            log_cache_len: usize::MAX, // 强制首帧填充一次
             up_path: String::new(),
             up_key: String::new(),
             up_ext,
@@ -587,14 +722,21 @@ impl App {
     /// 顶栏：标题 + 环境切换 + 配置来源
     fn draw_header(&mut self, ui: &mut egui::Ui, size: egui::Vec2) {
         ui.allocate_ui(size, |ui| {
-            // 顶栏：标题 + 环境切换
-            ui.add_space(2.0);
             ui.horizontal(|ui| {
-                ui.heading(
-                    egui::RichText::new("sync-iobs").color(ACCENT).strong(),
+                ui.label(egui::RichText::new("sync-iobs").size(18.0).color(TEXT).strong());
+                ui.add_space(2.0);
+                ui.label(
+                    egui::RichText::new("iobs 文件双向同步").color(TEXT_MUTED).small(),
                 );
-                ui.label(egui::RichText::new("iobs 文件双向同步").weak());
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if self.envs.is_empty() {
+                        ui.label(
+                            egui::RichText::new("ini 中未配置环境段")
+                                .color(WARN)
+                                .small(),
+                        );
+                        return;
+                    }
                     let mut changed = false;
                     egui::ComboBox::from_id_salt("env")
                         .selected_text(format!("环境：{}", self.env))
@@ -606,6 +748,7 @@ impl App {
                             }
                         });
                     if changed {
+                        save_last_env(&self.env);
                         let opts = vec![("--env".to_string(), self.env.clone())];
                         match config::resolve_sections_relaxed(&self.sections, &opts) {
                             Ok(c) => {
@@ -633,192 +776,191 @@ impl App {
 
     /// 中部表单：连接凭据 / 上传 / 下载 / 最近上传（放在 ScrollArea 里，不会把下面的内容挤出屏幕）
     fn draw_forms(&mut self, ui: &mut egui::Ui) {
-        {
-            // 连接凭据：缺了也能进界面，在这里补上并保存
-            let missing_cred = self.cfg.access_key.is_empty() || self.cfg.secret_key.is_empty();
-            ui.group(|ui| {
-                ui.vertical(|ui| {
-                    ui.horizontal(|ui| {
-                        ui.label(egui::RichText::new("连接凭据").strong());
-                        if missing_cred {
-                            ui.label(
-                                egui::RichText::new("⚠ 未配置 access_key / secret_key")
-                                    .color(egui::Color32::from_rgb(220, 38, 38)),
-                            );
-                        }
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            if ui.button("保存").clicked() {
-                                self.save_credentials();
-                            }
-                        });
-                    });
-                    ui.horizontal(|ui| {
-                        ui.label("AK  ：");
-                        ui.add(
-                            egui::TextEdit::singleline(&mut self.ak)
-                                .hint_text("access_key")
-                                .password(true)
-                                .desired_width(320.0),
-                        );
-                        ui.label("SK  ：");
-                        ui.add(
-                            egui::TextEdit::singleline(&mut self.sk)
-                                .hint_text("secret_key")
-                                .password(true)
-                                .desired_width(320.0),
-                        );
-                    });
-                    ui.label(
-                        egui::RichText::new(format!("保存位置：{}", self.cfg_path.display()))
-                            .weak()
-                            .small(),
-                    );
-                });
-            });
+        ui.spacing_mut().item_spacing.y = 12.0;
 
-            ui.group(|ui| {
-                ui.vertical(|ui| {
-                    ui.label(egui::RichText::new("上传").strong());
-                    ui.horizontal(|ui| {
-                        ui.label("文件：");
-                        ui.add(
-                            egui::TextEdit::singleline(&mut self.up_path)
-                                .hint_text("选择本地文件")
-                                .desired_width(340.0),
-                        );
-                        if ui.button("浏览…").clicked() {
-                            if let Some(p) = rfd::FileDialog::new().pick_file() {
-                                self.up_path = p.to_string_lossy().to_string();
-                                if self.up_key.trim().is_empty() {
-                                    self.up_key = p
-                                        .file_name()
-                                        .map(|s| s.to_string_lossy().to_string())
-                                        .unwrap_or_default();
-                                }
-                            }
-                        }
-                    });
-                    ui.horizontal(|ui| {
-                        ui.label("key ：");
-                        ui.add(
-                            egui::TextEdit::singleline(&mut self.up_key)
-                                .hint_text("留空则用文件名")
-                                .desired_width(200.0),
-                        );
-                        ui.label("后缀：");
-                        ui.add(
-                            egui::TextEdit::singleline(&mut self.up_ext)
-                                .hint_text("留空保持原样")
-                                .desired_width(90.0),
-                        );
-                        ui.add_space(6.0);
-                        if ui
-                            .add(egui::Button::new(
-                                egui::RichText::new("开始上传").color(egui::Color32::WHITE),
-                            ).fill(ACCENT))
-                            .clicked()
-                        {
-                            self.start_upload();
-                        }
-                    });
-                });
-            });
-
-            ui.add_space(8.0);
-
-            ui.group(|ui| {
-                ui.vertical(|ui| {
-                    ui.label(egui::RichText::new("下载").strong());
-                    ui.horizontal(|ui| {
-                        ui.label("key ：");
-                        ui.add(
-                            egui::TextEdit::singleline(&mut self.dl_key)
-                                .hint_text("iobs 中的 key")
-                                .desired_width(340.0),
-                        );
-                    });
-                    ui.horizontal(|ui| {
-                        ui.label("保存：");
-                        ui.add(
-                            egui::TextEdit::singleline(&mut self.dl_out)
-                                .hint_text("留空则保存到当前目录")
-                                .desired_width(340.0),
-                        );
-                        if ui.button("选择目录…").clicked() {
-                            if let Some(p) = rfd::FileDialog::new().pick_folder() {
-                                self.dl_out = p.to_string_lossy().to_string();
-                            }
-                        }
-                        if ui
-                            .add(egui::Button::new(
-                                egui::RichText::new("开始下载").color(egui::Color32::WHITE),
-                            ).fill(ACCENT))
-                            .clicked()
-                        {
-                            self.start_download();
-                        }
-                    });
-                });
-            });
-
-            ui.add_space(8.0);
-
-            // 最近上传：存于 iobs 固定 key，可一键快速下载
-            ui.group(|ui| {
-                ui.vertical(|ui| {
-                    ui.horizontal(|ui| {
-                        ui.label(egui::RichText::new("最近上传").strong());
-                        ui.label(
-                            egui::RichText::new(format!("(存于 iobs key: {})", HISTORY_KEY)).weak(),
-                        );
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            if ui.button("刷新").clicked() {
-                                self.request_history_refresh();
-                            }
-                        });
-                    });
-                    if self.history.is_empty() {
-                        ui.label(egui::RichText::new("暂无记录（上传后会自动记录）").weak());
-                    } else {
-                        // 先 clone 出本次要展示的数据，避免在循环里既借 immutable 又借 mutable
-                        let items: Vec<(String, String, u64)> = self
-                            .history
-                            .iter()
-                            .map(|it| (it.name.clone(), it.key.clone(), it.time))
-                            .collect();
-                        for (name, key, time) in items {
-                            ui.horizontal(|ui| {
-                                ui.label(egui::RichText::new(&name).strong());
-                                ui.label(egui::RichText::new(format!("key: {}", key)).weak());
-                                ui.label(egui::RichText::new(fmt_time(time)).weak());
-                                if ui.button("下载").clicked() {
-                                    self.start_download_key(&key, &name);
-                                }
-                            });
-                        }
+        // —— 连接凭据 ——
+        let missing_cred = self.cfg.access_key.is_empty() || self.cfg.secret_key.is_empty();
+        card(ui, |ui| {
+            ui.horizontal(|ui| {
+                section_title(ui, "连接凭据");
+                if missing_cred {
+                    chip(ui, "未配置", DANGER, DANGER_SOFT);
+                } else {
+                    chip(ui, "已配置", OK, OK_SOFT);
+                }
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if ghost_button(ui, "保存") {
+                        self.save_credentials();
                     }
                 });
             });
+            ui.add_space(2.0);
+            form_row(ui, "AK", |ui| {
+                ui.add(
+                    egui::TextEdit::singleline(&mut self.ak)
+                        .hint_text("access_key")
+                        .password(true)
+                        .desired_width(300.0),
+                );
+            });
+            form_row(ui, "SK", |ui| {
+                ui.add(
+                    egui::TextEdit::singleline(&mut self.sk)
+                        .hint_text("secret_key")
+                        .password(true)
+                        .desired_width(300.0),
+                );
+            });
+            ui.label(
+                egui::RichText::new(format!("保存位置：{}", self.cfg_path.display()))
+                    .color(TEXT_FAINT)
+                    .small(),
+            );
+        });
 
-            ui.add_space(8.0);
-        }
+        // —— 上传 ——
+        card(ui, |ui| {
+            ui.horizontal(|ui| {
+                section_title(ui, "上传");
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if primary_button(ui, "开始上传") {
+                        self.start_upload();
+                    }
+                });
+            });
+            ui.add_space(2.0);
+            form_row(ui, "文件", |ui| {
+                ui.add(
+                    egui::TextEdit::singleline(&mut self.up_path)
+                        .hint_text("选择本地文件")
+                        .desired_width(300.0),
+                );
+                if ghost_button(ui, "浏览") {
+                    if let Some(p) = rfd::FileDialog::new().pick_file() {
+                        self.up_path = p.to_string_lossy().to_string();
+                        if self.up_key.trim().is_empty() {
+                            self.up_key = p
+                                .file_name()
+                                .map(|s| s.to_string_lossy().to_string())
+                                .unwrap_or_default();
+                        }
+                    }
+                }
+            });
+            form_row(ui, "key", |ui| {
+                ui.add(
+                    egui::TextEdit::singleline(&mut self.up_key)
+                        .hint_text("留空则用文件名")
+                        .desired_width(140.0),
+                );
+                ui.add_space(4.0);
+                ui.label(egui::RichText::new("后缀").color(TEXT_MUTED).small());
+                ui.add(
+                    egui::TextEdit::singleline(&mut self.up_ext)
+                        .hint_text("留空保持原样")
+                        .desired_width(90.0),
+                );
+            });
+        });
+
+        // —— 下载 ——
+        card(ui, |ui| {
+            ui.horizontal(|ui| {
+                section_title(ui, "下载");
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if primary_button(ui, "开始下载") {
+                        self.start_download();
+                    }
+                });
+            });
+            ui.add_space(2.0);
+            form_row(ui, "key", |ui| {
+                ui.add(
+                    egui::TextEdit::singleline(&mut self.dl_key)
+                        .hint_text("iobs 中的 key")
+                        .desired_width(300.0),
+                );
+            });
+            form_row(ui, "保存", |ui| {
+                ui.add(
+                    egui::TextEdit::singleline(&mut self.dl_out)
+                        .hint_text("留空则保存到当前目录")
+                        .desired_width(300.0),
+                );
+                if ghost_button(ui, "选择目录") {
+                    if let Some(p) = rfd::FileDialog::new().pick_folder() {
+                        self.dl_out = p.to_string_lossy().to_string();
+                    }
+                }
+            });
+        });
+
+        // —— 最近上传 ——
+        card(ui, |ui| {
+            ui.horizontal(|ui| {
+                section_title(ui, "最近上传");
+                ui.label(
+                    egui::RichText::new(format!("存于 iobs key: {}", HISTORY_KEY))
+                        .color(TEXT_FAINT)
+                        .small(),
+                );
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if ghost_button(ui, "刷新") {
+                        self.request_history_refresh();
+                    }
+                });
+            });
+            ui.add_space(2.0);
+            if self.history.is_empty() {
+                ui.label(
+                    egui::RichText::new("暂无记录（上传后会自动记录）")
+                        .color(TEXT_FAINT)
+                        .small(),
+                );
+            } else {
+                let items: Vec<(String, String, u64)> = self
+                    .history
+                    .iter()
+                    .map(|it| (it.name.clone(), it.key.clone(), it.time))
+                    .collect();
+                for (name, key, time) in items {
+                    ui.horizontal(|ui| {
+                        ui.label(egui::RichText::new(&name).color(TEXT).strong());
+                        if key != name {
+                            ui.label(egui::RichText::new(&key).color(TEXT_FAINT).small());
+                        }
+                        ui.label(
+                            egui::RichText::new(fmt_time(time)).color(TEXT_FAINT).small(),
+                        );
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            if ghost_button(ui, "下载") {
+                                self.start_download_key(&key, &name);
+                            }
+                        });
+                    });
+                    ui.add_space(2.0);
+                }
+            }
+        });
+
+        ui.add_space(4.0);
     }
 
     /// 底部停靠区：任务进度 + 操作日志（高度固定，始终可见，不会滚出屏幕）
     fn draw_dock(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
         let avail_h = ui.available_height();
-        // 任务区略多于日志区，各自独立滚动；26 是两处标题栏 + 间距的预留
-        let tasks_h = (avail_h * 0.55).max(60.0);
-        let log_h = (avail_h - tasks_h - 26.0).max(60.0);
+        // 日志默认折叠：折叠时任务区吃满剩余空间；展开后再按比例分配
+        let log_h = if self.log_open { (avail_h * 0.4).max(60.0) } else { 0.0 };
+        let tasks_h = (avail_h - log_h - 30.0).max(60.0);
 
         // ---- 任务区 ----
         ui.horizontal(|ui| {
-            ui.label(egui::RichText::new("任务").strong());
+            section_title(ui, "任务");
             if !self.msg.is_empty() {
-                ui.label(egui::RichText::new(&self.msg).weak());
+                ui.label(egui::RichText::new(&self.msg).color(TEXT_MUTED).small());
             }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if ui.button("清空已完成").clicked() {
+                if ghost_button(ui, "清空已完成") {
                     if let Ok(mut v) = self.tasks.lock() {
                         v.retain(|t| t.status == "running");
                     }
@@ -828,177 +970,183 @@ impl App {
 
         let tasks: Vec<TaskState> = self.tasks.lock().map(|v| v.clone()).unwrap_or_default();
         if tasks.is_empty() {
-            ui.label(egui::RichText::new("暂无任务").weak());
+            ui.label(egui::RichText::new("暂无任务").color(TEXT_FAINT).small());
         } else {
             egui::ScrollArea::vertical()
                 .id_salt("tasks_scroll")
                 .max_height(tasks_h)
                 .auto_shrink([false, false])
                 .show(ui, |ui| {
-                    for t in tasks.iter().rev().take(20) {
-                        self.draw_task(ui, ctx, t);
-                        ui.add_space(4.0);
+                    ui.spacing_mut().item_spacing.y = 8.0;
+                    // 每个任务组含进度条/明细行，是最重的部件；只渲染最近 12 条
+                    for i in 0..tasks.len().min(12) {
+                        let t = tasks[tasks.len() - 1 - i].clone();
+                        self.draw_task(ui, ctx, &t);
                     }
                 });
         }
 
+        ui.add_space(2.0);
         ui.separator();
 
-        // ---- 操作日志 ----
+        // ---- 操作日志（默认折叠，点标题栏展开）----
         let entry_count = self.logs.lock().map(|v| v.len()).unwrap_or(0);
-        ui.horizontal(|ui| {
-            ui.label(egui::RichText::new("操作日志").strong());
-            ui.label(egui::RichText::new(format!("({} 条)", entry_count)).weak());
+        let state = egui::collapsing_header::CollapsingState::load_with_default_open(
+            ui.ctx(),
+            ui.id().with("log_section"),
+            false,
+        );
+        let header = state.show_header(ui, |ui| {
+            section_title(ui, "操作日志");
+            ui.label(
+                egui::RichText::new(format!("{} 条", entry_count))
+                    .color(TEXT_FAINT)
+                    .small(),
+            );
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if ui.button("清空日志").clicked() {
+                if ghost_button(ui, "清空") {
                     log::clear(&self.logs);
                 }
                 ui.checkbox(&mut self.log_auto_scroll, "自动滚动");
             });
         });
+        self.log_open = header.is_open();
+        if !self.log_open {
+            return;
+        }
+        header.body_unindented(|ui| {
+            // 日志条数没变就复用缓存，避免每帧克隆几十条（含 String）
+            let cur_len = self.logs.lock().map(|v| v.len()).unwrap_or(0);
+            if cur_len != self.log_cache_len {
+                self.log_cache = log::recent(&self.logs, 300);
+                self.log_cache_len = cur_len;
+            }
 
-        // 只渲染最近 60 条：每条 3 个 label，200 条时低配机器每帧要算 600 个文本，很吃 CPU
-        let entries = log::recent(&self.logs, 60);
-        if entries.is_empty() {
-            ui.label(egui::RichText::new("暂无日志").weak());
-        } else {
+            if self.log_cache.is_empty() {
+                ui.label(egui::RichText::new("暂无日志").color(TEXT_FAINT).small());
+                return;
+            }
+
+            // 虚拟化：只构建视口内可见的行，滚到哪渲染到哪
+            let row_h = 15.0;
+            let total = self.log_cache.len();
             let scroll = egui::ScrollArea::vertical()
                 .id_salt("log_scroll")
                 .max_height(log_h)
                 .auto_shrink([false, false]);
-            let scroll = if self.log_auto_scroll { scroll.stick_to_bottom(true) } else { scroll };
-            scroll.show(ui, |ui| {
-                for e in &entries {
-                    ui.horizontal_wrapped(|ui| {
-                        ui.spacing_mut().item_spacing.x = 6.0;
-                        ui.label(
-                            egui::RichText::new(fmt_hms(e.t))
-                                .monospace()
-                                .weak()
-                                .small(),
-                        );
-                        let (color, tag) = log_style(e.level);
-                        ui.label(
-                            egui::RichText::new(format!("[{}]", tag))
-                                .color(color)
-                                .monospace()
-                                .small()
-                                .strong(),
-                        );
-                        ui.label(egui::RichText::new(&e.msg).monospace().small());
-                    });
+            let scroll = if self.log_auto_scroll {
+                scroll.stick_to_bottom(true)
+            } else {
+                scroll
+            };
+            let cache = &self.log_cache;
+            scroll.show_rows(ui, row_h, total, |ui, range| {
+                for idx in range {
+                    if let Some(e) = cache.get(idx) {
+                        ui.horizontal(|ui| {
+                            ui.spacing_mut().item_spacing.x = 6.0;
+                            ui.label(
+                                egui::RichText::new(fmt_hms(e.t))
+                                    .monospace()
+                                    .color(TEXT_FAINT)
+                                    .small(),
+                            );
+                            let (color, tag) = log_style(e.level);
+                            ui.label(
+                                egui::RichText::new(format!("[{}]", tag))
+                                    .color(color)
+                                    .monospace()
+                                    .small()
+                                    .strong(),
+                            );
+                            ui.label(
+                                egui::RichText::new(&e.msg).monospace().color(TEXT).small(),
+                            );
+                        });
+                    }
                 }
             });
-        }
+        });
     }
 }
 
 impl App {
     /// 单个任务的渲染（上传/下载通用）
     fn draw_task(&mut self, ui: &mut egui::Ui, ctx: &egui::Context, t: &TaskState) {
-        ui.group(|ui| {
-            ui.vertical(|ui| {
-                ui.horizontal(|ui| {
-                    let badge = match t.kind.as_str() {
-                        "上传" => egui::RichText::new("上传").color(ACCENT),
-                        _ => egui::RichText::new("下载").color(egui::Color32::from_rgb(22, 163, 74)),
-                    };
-                    ui.label(egui::RichText::new(format!("[{}]", badge.text())).color(ACCENT));
-                    ui.label(egui::RichText::new(&t.name).strong());
-                    if !t.key.is_empty() && t.key != t.name {
-                        ui.label(egui::RichText::new(format!("key: {}", t.key)).weak());
-                    }
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        match t.status.as_str() {
-                            "running" => {
-                                ui.label(egui::RichText::new("进行中").color(ACCENT));
-                            }
-                            "done" => {
-                                ui.label(
-                                    egui::RichText::new("完成")
-                                        .color(egui::Color32::from_rgb(22, 163, 74)),
-                                );
-                            }
-                            _ => {
-                                ui.label(
-                                    egui::RichText::new("失败")
-                                        .color(egui::Color32::from_rgb(220, 38, 38)),
-                                );
-                            }
-                        }
-                    });
-                });
-
-                if t.status == "error" {
-                    ui.colored_label(
-                        egui::Color32::from_rgb(220, 38, 38),
-                        egui::RichText::new(&t.error).small(),
-                    );
+        card(ui, |ui| {
+            ui.horizontal(|ui| {
+                let (fg, bg, kind) = if t.kind == "上传" {
+                    (ACCENT, ACCENT_SOFT, "上传")
                 } else {
-                    let frac = if t.total > 0 {
-                        (t.done as f32 / t.total as f32).clamp(0.0, 1.0)
-                    } else {
-                        0.0
-                    };
-                    let pct = if t.total > 0 {
-                        (frac * 100.0) as u32
-                    } else {
-                        0
-                    };
-                    let bar_color = match t.kind.as_str() {
-                        "上传" => ACCENT,
-                        _ => egui::Color32::from_rgb(22, 163, 74),
-                    };
-                    // 进度条：加粗、上色、撑满宽度，条上直接标百分比
-                    ui.add(
-                        egui::ProgressBar::new(frac)
-                            .desired_height(16.0)
-                            .fill(bar_color)
-                            .text(if t.total > 0 {
-                                format!("{}%", pct)
-                            } else {
-                                "传输中…".to_string()
-                            }),
-                    );
-                    // 明细行：已传/总量 · 速度 · 剩余秒数
-                    let mut detail = if t.total > 0 {
-                        format!(
-                            "{} / {}  ·  {}/s",
-                            human_bytes(t.done),
-                            human_bytes(t.total),
-                            human_bytes(t.speed)
-                        )
-                    } else {
-                        format!(
-                            "已接收 {}  ·  {}/s",
-                            human_bytes(t.done),
-                            human_bytes(t.speed)
-                        )
-                    };
-                    if t.total > 0 && t.done < t.total && t.speed > 0 {
-                        let left = (t.total - t.done) as f64;
-                        let eta = (left / t.speed as f64) as u64;
-                        detail.push_str(&format!("  ·  剩余 {}s", eta));
-                    }
-                    ui.label(egui::RichText::new(detail).weak().small());
+                    (OK, OK_SOFT, "下载")
+                };
+                chip(ui, kind, fg, bg);
+                ui.label(egui::RichText::new(&t.name).color(TEXT).strong());
+                if !t.key.is_empty() && t.key != t.name {
+                    ui.label(egui::RichText::new(&t.key).color(TEXT_FAINT).small());
                 }
-
-                ui.horizontal(|ui| {
-                    if !t.url.is_empty() {
-                        if ui.button("复制下载地址").clicked() {
-                            ctx.copy_text(t.url.clone());
-                            self.msg = "地址已复制到剪贴板".to_string();
-                        }
-                    }
-                    if !t.out.is_empty() && (t.status == "done") {
-                        if ui.button("打开所在目录").clicked() {
-                            let p = t.out.clone();
-                            std::thread::spawn(move || {
-                                reveal_in_file_manager(&p);
-                            });
-                        }
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    match t.status.as_str() {
+                        "running" => chip(ui, "进行中", ACCENT, ACCENT_SOFT),
+                        "done" => chip(ui, "完成", OK, OK_SOFT),
+                        _ => chip(ui, "失败", DANGER, DANGER_SOFT),
                     }
                 });
+            });
+
+            if t.status == "error" {
+                ui.label(egui::RichText::new(&t.error).color(DANGER).small());
+            } else {
+                let frac = if t.total > 0 {
+                    (t.done as f32 / t.total as f32).clamp(0.0, 1.0)
+                } else {
+                    0.0
+                };
+                let bar_color = if t.kind == "上传" { ACCENT } else { OK };
+                // 细进度条 + 单独的明细行（百分比不再叠在条上，更清爽）
+                ui.add(
+                    egui::ProgressBar::new(frac)
+                        .desired_height(8.0)
+                        .fill(bar_color),
+                );
+                let mut detail = if t.total > 0 {
+                    format!(
+                        "{}% · {} / {} · {}/s",
+                        (frac * 100.0) as u32,
+                        human_bytes(t.done),
+                        human_bytes(t.total),
+                        human_bytes(t.speed)
+                    )
+                } else {
+                    format!(
+                        "已接收 {} · {}/s",
+                        human_bytes(t.done),
+                        human_bytes(t.speed)
+                    )
+                };
+                if t.total > 0 && t.done < t.total && t.speed > 0 {
+                    let left = (t.total - t.done) as f64;
+                    let eta = (left / t.speed as f64) as u64;
+                    detail.push_str(&format!(" · 剩余 {}s", eta));
+                }
+                ui.label(egui::RichText::new(detail).color(TEXT_MUTED).small());
+            }
+
+            ui.horizontal(|ui| {
+                if !t.url.is_empty() {
+                    if ghost_button(ui, "复制地址") {
+                        ctx.copy_text(t.url.clone());
+                        self.msg = "地址已复制到剪贴板".to_string();
+                    }
+                }
+                if !t.out.is_empty() && (t.status == "done") {
+                    if ghost_button(ui, "打开目录") {
+                        let p = t.out.clone();
+                        std::thread::spawn(move || {
+                            reveal_in_file_manager(&p);
+                        });
+                    }
+                }
             });
         });
     }
@@ -1010,6 +1158,38 @@ impl Drop for LoadingGuard {
     fn drop(&mut self) {
         self.0.store(false, Ordering::SeqCst);
     }
+}
+
+/// GUI 状态文件路径（与 iobs.ini 同目录）
+///
+/// 刻意**不写回 iobs.ini**：`write_sections` 会按解析结果重建整个文件，
+/// 用户手写的注释会被抹掉。状态单独存一个小文件最安全。
+fn state_path() -> PathBuf {
+    let mut p = config::default_config_path();
+    p.set_file_name("sync-iobs.state");
+    p
+}
+
+/// 读取上次使用的环境名
+fn load_last_env() -> Option<String> {
+    let text = std::fs::read_to_string(state_path()).ok()?;
+    let v = text
+        .lines()
+        .find_map(|l| l.trim().strip_prefix("last_env="))
+        .map(|s| s.trim().to_string())?;
+    if v.is_empty() {
+        None
+    } else {
+        Some(v)
+    }
+}
+
+/// 记住本次选择的环境（写失败也不影响使用，静默忽略）
+fn save_last_env(env: &str) {
+    if env.is_empty() {
+        return;
+    }
+    let _ = std::fs::write(state_path(), format!("last_env={}\n", env));
 }
 
 /// 在系统文件管理器里定位文件（各系统命令不同；原先只写了 explorer，macOS 上点了没反应）
@@ -1067,9 +1247,9 @@ fn fmt_hms(secs: u64) -> String {
 /// 日志级别 -> (颜色, 标签)
 fn log_style(level: &str) -> (egui::Color32, &'static str) {
     match level {
-        "OK" => (egui::Color32::from_rgb(22, 163, 74), "OK  "),
-        "WARN" => (egui::Color32::from_rgb(217, 119, 6), "WARN"),
-        "ERR" => (egui::Color32::from_rgb(220, 38, 38), "ERR "),
+        "OK" => (OK, "OK  "),
+        "WARN" => (WARN, "WARN"),
+        "ERR" => (DANGER, "ERR "),
         _ => (egui::Color32::from_rgb(100, 116, 139), "INFO"),
     }
 }

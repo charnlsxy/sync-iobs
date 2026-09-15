@@ -3081,7 +3081,7 @@ dependencies = [
 
 [[package]]
 name = "sync-iobs"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "eframe",
  "native-tls",

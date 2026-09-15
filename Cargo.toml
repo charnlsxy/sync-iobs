@@ -1,6 +1,6 @@
 [package]
 name = "sync-iobs"
-version = "0.1.6"
+version = "0.1.7"
 edition = "2021"
 description = "iobs 文件双向同步命令行工具（上传/下载 + 实时进度）"
 
