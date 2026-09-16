@@ -28,6 +28,10 @@ set(GLFW_BUILD_DOCS     OFF CACHE BOOL "" FORCE)
 set(GLFW_BUILD_TESTS    OFF CACHE BOOL "" FORCE)
 set(GLFW_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
 set(GLFW_INSTALL        OFF CACHE BOOL "" FORCE)
+# GLFW 3.4 默认启用 Wayland，需要 wayland-scanner/protocols；
+# 本项目只用 X11（Wayland 桌面走 XWayland），关掉可省一堆构建依赖
+set(GLFW_BUILD_WAYLAND  OFF CACHE BOOL "" FORCE)
+set(GLFW_BUILD_X11      ON  CACHE BOOL "" FORCE)
 FetchContent_Declare(glfw
     GIT_REPOSITORY https://github.com/glfw/glfw.git
     GIT_TAG        3.4
@@ -67,7 +71,9 @@ if(WIN32)
     # Windows 用 WinHTTP，无需第三方 HTTP 库
     target_link_libraries(sync-iobs PRIVATE winhttp)
     target_compile_definitions(sync-iobs PRIVATE _WIN32_WINNT=0x0600)
-    set_target_properties(sync-iobs PROPERTIES WIN32_EXECUTABLE $<NOT:$<CONFIG:Debug>>)
+    set_target_properties(sync-iobs PROPERTIES WIN32_EXECUTABLE TRUE)
+    # 子系统为 windows 时链接器找 WinMain；指定入口为 mainCRTStartup 就能沿用 main()
+    target_link_options(sync-iobs PRIVATE "/ENTRY:mainCRTStartup")
 else()
     # macOS / Linux 用 libcurl
     find_package(CURL REQUIRED)
