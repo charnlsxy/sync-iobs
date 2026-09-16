@@ -26,3 +26,9 @@ out
 
 # GUI 运行时状态（记住上次选择的环境等），不要提交
 sync-iobs.state
+
+# CMake
+build/
+out/
+cmake-build-*/
+CMakeUserPresets.json

@@ -84,8 +84,20 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--repo", required=True, help="owner/name")
     ap.add_argument("--branch", default="main")
+    ap.add_argument("--base", default="main", help="目标分支不存在时，以该分支为起点创建")
     ap.add_argument("--message", help="提交信息；省略则用 git 最近一次提交的信息")
     ap.add_argument("--files", nargs="*", default=[], help="要推送的文件路径")
+    ap.add_argument(
+        "--delete",
+        nargs="*",
+        default=[],
+        help="要删除的文件路径（tree 里把该路径的 sha 置空；本脚本默认不做删除）",
+    )
+    ap.add_argument(
+        "--create-branch",
+        action="store_true",
+        help="分支不存在时自动创建（默认只更新已存在的分支）",
+    )
     ap.add_argument("--all-tracked", action="store_true", help="推送所有已跟踪文件（整树同步）")
     ap.add_argument("--expect-base", help="期望的远程基线 sha（默认为远程当前 HEAD）")
     args = ap.parse_args()
@@ -94,10 +106,13 @@ def main():
     if not token:
         raise SystemExit("未设置 GH_TOKEN")
 
-    # 1. 远程当前 HEAD
-    remote = api(token, "GET", f"/repos/{args.repo}/git/ref/heads/{args.branch}")
-    base = remote["object"]["sha"]
-    print(f"远程 {args.branch} HEAD: {base[:10]}")
+    # 1. 基线 commit：目标分支存在就用它的 HEAD，不存在则以 --base 为起点新建
+    try:
+        base = api(token, "GET", f"/repos/{args.repo}/git/ref/heads/{args.branch}")["object"]["sha"]
+        print(f"远程 {args.branch} HEAD: {base[:10]}")
+    except SystemExit:
+        base = api(token, "GET", f"/repos/{args.repo}/git/ref/heads/{args.base}")["object"]["sha"]
+        print(f"分支 {args.branch} 不存在，以 {args.base}({base[:10]}) 为起点创建")
 
     if args.expect_base and not base.startswith(args.expect_base):
         raise SystemExit(f"远程基线已变化（期望 {args.expect_base}，实际 {base[:10]}），请先拉取")
@@ -121,6 +136,11 @@ def main():
         print(f"  blob {p:<46} {len(content):>8} bytes -> {blob['sha'][:10]}")
         items.append({"path": p, "mode": "100644", "type": "blob", "sha": blob["sha"]})
 
+    # 删除：sha 置 null 即从新 tree 中移除该路径
+    for p in args.delete:
+        print(f"  del  {p:<46}")
+        items.append({"path": p.replace("\\", "/"), "mode": "100644", "type": "blob", "sha": None})
+
     # 3. 建 tree
     base_tree = api(token, "GET", f"/repos/{args.repo}/git/commits/{base}")["tree"]["sha"]
     tree = api(token, "POST", f"/repos/{args.repo}/git/trees",
@@ -132,10 +152,26 @@ def main():
                  {"message": msg.strip(), "tree": tree["sha"], "parents": [base]})
     print(f"新 commit: {commit['sha'][:10]}")
 
-    # 5. 快进分支（force=False：非快进会失败，避免覆盖）
-    ref = api(token, "PATCH", f"/repos/{args.repo}/git/refs/heads/{args.branch}",
-              {"sha": commit["sha"], "force": False})
-    print(f"{args.branch} -> {ref['object']['sha'][:10]}")
+    # 5. 更新分支（force=False：非快进会失败，避免覆盖）；分支不存在时按需创建
+    try:
+        ref = api(token, "PATCH", f"/repos/{args.repo}/git/refs/heads/{args.branch}",
+                  {"sha": commit["sha"], "force": False})
+        print(f"{args.branch} -> {ref['object']['sha'][:10]}")
+    except urllib.error.HTTPError as e:
+        if e.code in (404, 422) and args.create_branch:
+            ref = api(token, "POST", f"/repos/{args.repo}/git/refs",
+                      {"ref": f"refs/heads/{args.branch}", "sha": commit["sha"]})
+            print(f"分支已创建: {args.branch} -> {ref['object']['sha'][:10]}")
+        else:
+            raise SystemExit(f"更新分支失败 HTTP {e.code}: {e.read().decode()[:300]}")
+    except SystemExit as e:
+        # api() 对 404/422 会抛 SystemExit；分支不存在且允许创建时改走新建
+        if args.create_branch:
+            ref = api(token, "POST", f"/repos/{args.repo}/git/refs",
+                      {"ref": f"refs/heads/{args.branch}", "sha": commit["sha"]})
+            print(f"分支已创建: {args.branch} -> {ref['object']['sha'][:10]}")
+        else:
+            raise
     print("推送完成")
 
 

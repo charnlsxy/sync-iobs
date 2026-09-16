@@ -1,0 +1,74 @@
+name: Build C++ (Dear ImGui)
+
+# C++ 重构分支：推送即编译三平台，验证工具链可用
+on:
+  push:
+    branches: ["cpp-imgui"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build (${{ matrix.label }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            label: windows-x86_64
+          - os: macos-14
+            label: macos-arm64
+          - os: ubuntu-latest
+            label: linux-x86_64
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # Linux 上 GLFW 需要 X11/OpenGL 开发包；libcurl 用于 HTTP
+      - name: Install Linux deps
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential cmake \
+            libx11-dev libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev \
+            libgl1-mesa-dev libcurl4-openssl-dev
+
+      - name: Cache FetchContent
+        uses: actions/cache@v4
+        with:
+          path: build/_deps
+          key: ${{ runner.os }}-fc-${{ hashFiles('CMakeLists.txt') }}
+
+      - name: Configure
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build
+        run: cmake --build build --config Release --parallel 2
+
+      - name: Package
+        shell: bash
+        run: |
+          set -eu
+          mkdir -p out
+          if [ -f build/Release/sync-iobs.exe ]; then
+            cp build/Release/sync-iobs.exe out/
+          elif [ -f build/sync-iobs.exe ]; then
+            cp build/sync-iobs.exe out/
+          elif [ -f build/sync-iobs ]; then
+            cp build/sync-iobs out/
+          else
+            echo "::error::找不到构建产物"
+            find build -maxdepth 3 -name 'sync-iobs*' -type f
+            exit 1
+          fi
+          ls -lh out
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: cpp-${{ matrix.label }}
+          path: out/*
