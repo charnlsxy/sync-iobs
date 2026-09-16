@@ -1,6 +1,6 @@
 [package]
 name = "sync-iobs"
-version = "0.1.7"
+version = "0.1.8"
 edition = "2021"
 description = "iobs 文件双向同步命令行工具（上传/下载 + 实时进度）"
 
@@ -17,7 +17,10 @@ eframe = { version = "0.36", optional = true }
 rfd = { version = "0.17", optional = true }
 
 [profile.release]
-opt-level = "s"
+# 3 = 按速度优化。原先是 "s"（按体积优化），会抑制内联与展开，
+# 而界面每帧都要做布局/文本排版/几何细分，这些热路径被拖慢了。
+# 代价是产物体积变大（约 +2~4MB）。
+opt-level = 3
 lto = true
 strip = true
 panic = "abort"
