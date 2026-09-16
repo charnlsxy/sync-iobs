@@ -12,6 +12,10 @@ endif()
 # Windows 静态链接 CRT，产物可单文件分发（MSVC）
 if(MSVC)
     set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+    # 必须：MSVC 默认不把「无 BOM 的 UTF-8」当 UTF-8，源码里的中文会破坏后续
+    # #include 的解析（表现为明明 include 了 <array> 却报 std::array 未定义）。
+    # 本项目界面文案全是中文，所以这个选项是刚需。
+    add_compile_options(/utf-8)
 endif()
 
 include(FetchContent)
@@ -82,4 +86,11 @@ endif()
 
 if(APPLE)
     target_compile_definitions(sync-iobs PRIVATE GL_SILENCE_DEPRECATION)
+endif()
+
+# 核心算法自测（不依赖 GUI / 网络），CI 里每个平台都会跑
+option(SYNC_IOBS_BUILD_TESTS "Build self tests" ON)
+if(SYNC_IOBS_BUILD_TESTS)
+    enable_testing()
+    add_subdirectory(tests)
 endif()

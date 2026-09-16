@@ -50,6 +50,22 @@ jobs:
       - name: Build
         run: cmake --build build --config Release --parallel 2
 
+      # 核心算法自测（SHA1 / HMAC / base64url / token / ini），失败则整个构建失败
+      - name: Self test
+        shell: bash
+        run: |
+          set -eu
+          if [ -f build/Release/selftest.exe ]; then
+            ./build/Release/selftest.exe
+          elif [ -f build/tests/Release/selftest.exe ]; then
+            ./build/tests/Release/selftest.exe
+          elif [ -f build/tests/selftest ]; then
+            ./build/tests/selftest
+          else
+            echo "::error::找不到自测程序"
+            exit 1
+          fi
+
       - name: Package
         shell: bash
         run: |
