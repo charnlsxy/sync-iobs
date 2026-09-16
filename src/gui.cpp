@@ -4,6 +4,8 @@
 #include "imgui_impl_glfw.h"
 #include "imgui_impl_opengl3.h"
 #include "imgui_impl_opengl3_loader.h"
+// InputText 的 std::string 重载（CMake 里已把 misc/cpp/imgui_stdlib.cpp 编进来）
+#include "misc/cpp/imgui_stdlib.h"
 
 #include <GLFW/glfw3.h>
 

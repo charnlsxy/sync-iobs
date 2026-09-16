@@ -16,6 +16,8 @@ if(MSVC)
     # #include 的解析（表现为明明 include 了 <array> 却报 std::array 未定义）。
     # 本项目界面文案全是中文，所以这个选项是刚需。
     add_compile_options(/utf-8)
+    # 否则 windows.h 里的 min/max 宏会和 std::min/std::max 打架（C2589）
+    add_compile_definitions(NOMINMAX)
 endif()
 
 include(FetchContent)
@@ -50,7 +52,9 @@ add_library(imgui STATIC
     ${imgui_SOURCE_DIR}/imgui_tables.cpp
     ${imgui_SOURCE_DIR}/imgui_widgets.cpp
     ${imgui_SOURCE_DIR}/backends/imgui_impl_glfw.cpp
-    ${imgui_SOURCE_DIR}/backends/imgui_impl_opengl3.cpp)
+    ${imgui_SOURCE_DIR}/backends/imgui_impl_opengl3.cpp
+    # InputText 的 std::string 重载在这个文件里，默认不会编译进来
+    ${imgui_SOURCE_DIR}/misc/cpp/imgui_stdlib.cpp)
 target_include_directories(imgui PUBLIC
     ${imgui_SOURCE_DIR}
     ${imgui_SOURCE_DIR}/backends)
