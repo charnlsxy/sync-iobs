@@ -17,8 +17,19 @@ add_executable(selftest
     ${CMAKE_CURRENT_SOURCE_DIR}/../src/base64.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../src/token.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../src/config.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../src/json.cpp
+    # 这两个模块不参与断言，但一起编译可以提前暴露语法/类型错误
+    ${CMAKE_CURRENT_SOURCE_DIR}/../src/http.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../src/iobs.cpp
 )
 target_include_directories(selftest PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../src)
+
+if(WIN32)
+    target_link_libraries(selftest PRIVATE winhttp)
+else()
+    find_package(CURL REQUIRED)
+    target_link_libraries(selftest PRIVATE CURL::libcurl)
+endif()
 
 enable_testing()
 add_test(NAME selftest COMMAND selftest)

@@ -65,11 +65,27 @@ endif()
 
 # ---- 主程序 ----
 # 骨架阶段只编 main.cpp；后续移植各模块时在这里逐步追加源文件
-add_executable(sync-iobs
+set(SYNC_IOBS_SOURCES
     src/main.cpp
+    src/sha1.cpp
+    src/base64.cpp
+    src/token.cpp
+    src/config.cpp
+    src/http.cpp
+    src/json.cpp
+    src/iobs.cpp
+    src/gui.cpp
 )
+
+# GUI 版：Windows 子系统，双击不会闪控制台
+add_executable(sync-iobs ${SYNC_IOBS_SOURCES})
 target_include_directories(sync-iobs PRIVATE src)
 target_link_libraries(sync-iobs PRIVATE imgui glfw)
+
+# CLI 版：控制台子系统（GUI 版没有 stdout，命令行模式必须单独编一个）
+add_executable(sync-iobs-cli ${SYNC_IOBS_SOURCES})
+target_include_directories(sync-iobs-cli PRIVATE src)
+target_link_libraries(sync-iobs-cli PRIVATE imgui glfw)
 
 if(WIN32)
     # Windows 用 WinHTTP，无需第三方 HTTP 库
