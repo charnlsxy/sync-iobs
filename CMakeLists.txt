@@ -91,21 +91,29 @@ add_executable(sync-iobs-cli ${SYNC_IOBS_SOURCES})
 target_include_directories(sync-iobs-cli PRIVATE src)
 target_link_libraries(sync-iobs-cli PRIVATE imgui glfw)
 
+# 两个产物共用同一份源码，平台相关的库必须**都**链上，
+# 否则只链 GUI 版会让 CLI 版在链接期报 undefined reference
 if(WIN32)
     # Windows 用 WinHTTP，无需第三方 HTTP 库
-    target_link_libraries(sync-iobs PRIVATE winhttp)
-    target_compile_definitions(sync-iobs PRIVATE _WIN32_WINNT=0x0600)
+    foreach(t sync-iobs sync-iobs-cli)
+        target_link_libraries(${t} PRIVATE winhttp)
+        target_compile_definitions(${t} PRIVATE _WIN32_WINNT=0x0600)
+    endforeach()
     set_target_properties(sync-iobs PROPERTIES WIN32_EXECUTABLE TRUE)
     # 子系统为 windows 时链接器找 WinMain；指定入口为 mainCRTStartup 就能沿用 main()
     target_link_options(sync-iobs PRIVATE "/ENTRY:mainCRTStartup")
 else()
     # macOS / Linux 用 libcurl
     find_package(CURL REQUIRED)
-    target_link_libraries(sync-iobs PRIVATE CURL::libcurl)
+    foreach(t sync-iobs sync-iobs-cli)
+        target_link_libraries(${t} PRIVATE CURL::libcurl)
+    endforeach()
 endif()
 
 if(APPLE)
-    target_compile_definitions(sync-iobs PRIVATE GL_SILENCE_DEPRECATION)
+    foreach(t sync-iobs sync-iobs-cli)
+        target_compile_definitions(${t} PRIVATE GL_SILENCE_DEPRECATION)
+    endforeach()
 endif()
 
 # 核心算法自测（不依赖 GUI / 网络），CI 里每个平台都会跑
